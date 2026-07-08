@@ -426,6 +426,38 @@ def api_load():
             os.remove(temp_path)
 
 
+@app.route('/api/load_manual', methods=['POST'])
+def api_load_manual():
+    data = request.get_json(silent=True) or {}
+    numbers_text = data.get('numbers', '')
+    message = data.get('message', '')
+
+    user_id = session['user_id']
+    db_path = _get_db_path(user_id)
+
+    try:
+        tracker.init_db(db_path)
+        contacts, import_errors = csv_loader.load_manual_contacts(numbers_text, message)
+        if not contacts:
+            detail = import_errors[0] if import_errors else 'Cole os números e confira se estão completos.'
+            extra = import_errors[1:] if len(import_errors) > 1 else []
+            return jsonify({
+                'error': 'Nenhum número válido encontrado na lista.',
+                'detail': detail,
+                'errors': extra,
+            }), 400
+
+        inserted, skipped = tracker.upsert_contacts(contacts, db_path)
+        return jsonify({
+            'inserted': inserted,
+            'skipped': skipped,
+            'parsed': len(contacts),
+            'warnings': import_errors,
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
 @app.route('/api/preview')
 def api_preview():
     user_id = session['user_id']
@@ -498,7 +530,7 @@ def api_send():
     tracker.init_db(db_path)
     summary = tracker.get_summary(db_path)
     if not summary.get('pending', 0):
-        return jsonify({'error': 'Nenhuma mensagem pendente. Carregue um arquivo CSV primeiro.'}), 400
+        return jsonify({'error': 'Nenhuma mensagem pendente. Carregue contatos primeiro.'}), 400
 
     ust['stop_event'].clear()
     threading.Thread(target=_send_worker, args=(user_id,), daemon=True).start()

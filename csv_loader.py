@@ -3,15 +3,20 @@ import re
 import json
 import pandas as pd
 
+DEFAULT_COUNTRY_CODE = '55'
+DEFAULT_AREA_CODE = '11'
+
 
 def load_config() -> dict:
     with open('config.json', 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
-def normalize_phone(raw: str) -> str:
+def normalize_phone(raw: str, default_country_code: str = DEFAULT_COUNTRY_CODE,
+                    default_area_code: str = DEFAULT_AREA_CODE) -> str:
     """Normalize phone number to international format (+55...)."""
-    digits = re.sub(r'\D', '', str(raw).strip())
+    raw_text = str(raw).strip()
+    digits = re.sub(r'\D', '', raw_text)
 
     if not digits:
         raise ValueError(
@@ -19,28 +24,160 @@ def normalize_phone(raw: str) -> str:
             "Exemplos válidos: 11999990001 | (11) 99999-0001 | +5511999990001"
         )
 
-    # Already has country code (12+ digits starting with 55)
-    if digits.startswith('55') and len(digits) >= 12:
+    explicit_international = raw_text.lstrip().startswith('+')
+    if digits.startswith('00') and len(digits) > 10:
+        digits = digits[2:]
+        explicit_international = True
+
+    if explicit_international:
+        if len(digits) < 10:
+            raise ValueError(
+                f"Número internacional muito curto: {raw!r} → {digits!r}. "
+                "Use DDI + DDD + número. Ex: +5511999990001"
+            )
+        if len(digits) > 15:
+            raise ValueError(
+                f"Número internacional muito longo: {raw!r} → {digits!r} ({len(digits)} dígitos)."
+            )
+        return '+' + digits
+
+    # Remove o zero de operadora/tronco comum em formatos como 011999990001.
+    if digits.startswith('0') and len(digits) in (11, 12):
+        trunkless = digits[1:]
+        if len(trunkless) in (10, 11):
+            digits = trunkless
+
+    # Already has Brazilian country code (55 + DDD + number)
+    if digits.startswith(default_country_code) and len(digits) in (12, 13):
         return '+' + digits
 
     # Brazilian number without country code (10 or 11 digits)
     if len(digits) in (10, 11):
-        return '+55' + digits
+        return '+' + default_country_code + digits
+
+    # Local Brazilian number without DDD (8 or 9 digits)
+    if len(digits) in (8, 9):
+        return '+' + default_country_code + default_area_code + digits
 
     # Has some other country code (12+ digits, not starting with 55)
-    if len(digits) >= 12:
+    if 12 <= len(digits) <= 15:
         return '+' + digits
 
-    if len(digits) < 10:
+    if len(digits) < 8:
         raise ValueError(
             f"Número muito curto: {raw!r} → {digits!r} ({len(digits)} dígitos). "
-            "Mínimo: 10 dígitos (DDD + número). Ex: 11999990001"
+            "Mínimo: 8 dígitos. Ex: 999990001, 11999990001 ou +5511999990001"
         )
 
     raise ValueError(
         f"Número inválido: {raw!r} → {digits!r} ({len(digits)} dígitos). "
-        "Formatos aceitos: 11999999999 | +5511999999999 | (11) 99999-9999"
+        "Formatos aceitos: 999999999 | 11999999999 | +5511999999999 | (11) 99999-9999"
     )
+
+
+def _normalize_group_candidate(groups: list, start: int, end: int) -> tuple[str, str]:
+    digits = ''.join(group['digits'] for group in groups[start:end])
+    raw = ' '.join(group['token'] for group in groups[start:end])
+    first_digits = groups[start]['digits']
+    second_digits = groups[start + 1]['digits'] if end - start > 1 else ''
+
+    # Evita aceitar pedaços parciais de "+55 11 99999 0001" como número local.
+    looks_like_split_country_code = (
+        first_digits == DEFAULT_COUNTRY_CODE
+        and len(second_digits) <= 2
+        and len(digits) < 12
+    )
+    if looks_like_split_country_code:
+        raise ValueError('DDI parcial')
+
+    if groups[start]['token'].startswith('+'):
+        raw = '+' + digits
+
+    return normalize_phone(raw), raw
+
+
+def extract_phone_numbers(raw_text: str) -> tuple[list[dict], list[str]]:
+    """
+    Extract and normalize phone numbers from pasted free text.
+
+    Accepts numbers separated by commas, tabs, line breaks, spaces, or common
+    phone punctuation like +, (), hyphen and dots.
+    """
+    text = str(raw_text or '').strip()
+    if not text:
+        return [], ['Cole pelo menos um número.']
+
+    groups = [
+        {
+            'token': match.group(0),
+            'digits': re.sub(r'\D', '', match.group(0)),
+        }
+        for match in re.finditer(r'\+?\d+', text)
+    ]
+    if not groups:
+        return [], ['Nenhum número encontrado no texto colado.']
+
+    numbers = []
+    warnings = []
+    seen = set()
+    i = 0
+    while i < len(groups):
+        matched = None
+        max_end = min(len(groups), i + 5)
+        possible_ends = []
+
+        if len(groups[i]['digits']) >= 8:
+            possible_ends.append(i + 1)
+        possible_ends.extend(end for end in range(i + 1, max_end + 1) if end not in possible_ends)
+
+        for end in possible_ends:
+            try:
+                normalized, raw = _normalize_group_candidate(groups, i, end)
+            except ValueError:
+                continue
+            matched = {
+                'raw': raw,
+                'numero': normalized,
+            }
+            i = end
+            break
+
+        if matched is None:
+            token = groups[i]['token']
+            if len(groups[i]['digits']) >= 4:
+                warnings.append(f"Trecho ignorado por não parecer telefone completo: {token}")
+            i += 1
+            continue
+
+        if matched['numero'] in seen:
+            warnings.append(f"Número repetido ignorado: {matched['numero']}")
+            continue
+
+        seen.add(matched['numero'])
+        numbers.append(matched)
+
+    if not numbers and not warnings:
+        warnings.append('Nenhum número válido encontrado.')
+
+    return numbers, warnings
+
+
+def load_manual_contacts(numbers_text: str, message: str) -> tuple[list, list]:
+    """Build contacts from pasted phone numbers and one shared message."""
+    clean_message = str(message or '').strip()
+    if not clean_message:
+        raise ValueError('Digite a mensagem que será enviada para os números.')
+
+    parsed_numbers, warnings = extract_phone_numbers(numbers_text)
+    contacts = [
+        {
+            'nome': f'Contato {idx}',
+            'numero': item['numero'],
+            'mensagem': clean_message,
+        }
+        for idx, item in enumerate(parsed_numbers, start=1)
+    ]
+    return contacts, warnings
 
 
 def _read_csv(filepath: str) -> pd.DataFrame:

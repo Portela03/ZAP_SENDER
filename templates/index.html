@@ -38,6 +38,16 @@
     .drop-zone.dragover { border-color: #25d366; background: #eafbf0; }
     .drop-zone input { display: none; }
     .file-name { font-size: .82rem; color: #555; margin-top: 6px; word-break: break-all; }
+    .easy-mode-note {
+      background: #eefaf2; border: 1px solid #ccefd7; color: #155c33;
+      border-radius: 8px; padding: 10px 12px; font-size: .82rem;
+    }
+    .easy-mode-example {
+      background: #f8fafc; border: 1px solid #e6ebf1; border-radius: 8px;
+      padding: 8px 10px; font-size: .75rem; color: #59636e;
+    }
+    .easy-textarea { resize: vertical; min-height: 118px; }
+    .easy-message { min-height: 96px; }
     .progress-bar-wa { background: #25d366; }
     #progress-bar-wrap { display: none; }
     .config-modal .modal-content { border: none; border-radius: 14px; overflow: hidden; }
@@ -198,11 +208,11 @@
     <!-- Left column -->
     <div class="col-lg-5">
 
-      <!-- Upload -->
+      <!-- Entrada de contatos -->
       <div class="card p-4 mb-3">
         <div class="d-flex justify-content-between align-items-center mb-3">
           <h6 class="fw-semibold mb-0">
-            <i class="bi bi-file-earmark-spreadsheet text-success me-1"></i>Carregar Planilha
+            <i class="bi bi-person-lines-fill text-success me-1"></i>Adicionar Contatos
           </h6>
           <div class="d-flex gap-1">
             <a href="/api/template" class="btn btn-outline-success btn-sm" title="Baixar modelo CSV">
@@ -213,17 +223,65 @@
             </button>
           </div>
         </div>
-        <div class="drop-zone" id="drop-zone" onclick="document.getElementById('csv-input').click()"
-             ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
-          <i class="bi bi-cloud-upload fs-3 text-secondary"></i>
-          <div class="text-muted small mt-1">Arraste o arquivo aqui ou <strong>clique para selecionar</strong></div>
-          <div class="text-muted" style="font-size:.72rem;">CSV, XLSX ou XLS &mdash; colunas: <code>nome, numero, mensagem</code></div>
-          <input type="file" id="csv-input" accept=".csv,.xlsx,.xls" onchange="onFileSelect(this)">
-          <div class="file-name" id="file-name-label"></div>
+
+        <ul class="nav nav-pills nav-fill gap-1 mb-3" role="tablist">
+          <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="manual-tab" data-bs-toggle="pill" data-bs-target="#manual-pane" type="button" role="tab" aria-controls="manual-pane" aria-selected="true">
+              <i class="bi bi-lightning-charge me-1"></i>Modo fácil
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="csv-tab" data-bs-toggle="pill" data-bs-target="#csv-pane" type="button" role="tab" aria-controls="csv-pane" aria-selected="false">
+              <i class="bi bi-file-earmark-spreadsheet me-1"></i>Planilha
+            </button>
+          </li>
+        </ul>
+
+        <div class="tab-content">
+          <div class="tab-pane fade show active" id="manual-pane" role="tabpanel" aria-labelledby="manual-tab" tabindex="0">
+            <div class="easy-mode-note mb-3">
+              Cole os números em qualquer formato. Sem DDI vira <strong>+55</strong>; sem DDD vira <strong>11</strong>.
+            </div>
+
+            <div class="mb-3">
+              <label for="manual-numbers" class="form-label fw-semibold mb-1">Números dos clientes</label>
+              <textarea class="form-control easy-textarea" id="manual-numbers" rows="5"
+                placeholder="+55 11 99999-0001&#10;(21) 98888-0002, 99999-0003&#10;11977770000 31 96666-4444"
+                oninput="updateManualReady()"></textarea>
+              <div class="form-text">Pode separar por espaço, vírgula, tab ou uma linha por número.</div>
+            </div>
+
+            <div class="mb-3">
+              <label for="manual-message" class="form-label fw-semibold mb-1">Mensagem para todos</label>
+              <textarea class="form-control easy-message" id="manual-message" rows="4"
+                placeholder="Olá! Passando para avisar que seu pedido está pronto."
+                oninput="updateManualReady()"></textarea>
+            </div>
+
+            <div class="easy-mode-example mb-3">
+              Exemplo: <code>99999-0003</code> vira <code>+5511999990003</code>.
+            </div>
+
+            <button class="btn btn-success w-100" id="btn-manual-load" onclick="loadManual()" disabled>
+              <i class="bi bi-check2-circle me-1"></i>Carregar lista fácil
+            </button>
+          </div>
+
+          <div class="tab-pane fade" id="csv-pane" role="tabpanel" aria-labelledby="csv-tab" tabindex="0">
+            <div class="drop-zone" id="drop-zone" onclick="document.getElementById('csv-input').click()"
+                 ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+              <i class="bi bi-cloud-upload fs-3 text-secondary"></i>
+              <div class="text-muted small mt-1">Arraste o arquivo aqui ou <strong>clique para selecionar</strong></div>
+              <div class="text-muted" style="font-size:.72rem;">CSV, XLSX ou XLS &mdash; colunas: <code>nome, numero, mensagem</code></div>
+              <input type="file" id="csv-input" accept=".csv,.xlsx,.xls" onchange="onFileSelect(this)">
+              <div class="file-name" id="file-name-label"></div>
+            </div>
+            <button class="btn btn-sm btn-primary w-100 mt-2" id="btn-load" onclick="loadFile()">
+              <i class="bi bi-upload me-1"></i>Carregar Contatos
+            </button>
+          </div>
         </div>
-        <button class="btn btn-sm btn-primary w-100 mt-2" id="btn-load" onclick="loadFile()">
-          <i class="bi bi-upload me-1"></i>Carregar Contatos
-        </button>
+
         <button class="btn btn-sm btn-outline-success w-100 mt-2" id="btn-preview" onclick="openPreview()" disabled>
           <i class="bi bi-arrows-fullscreen me-1"></i>Ver prévia em tela cheia
         </button>
@@ -290,7 +348,7 @@
           </button>
         </div>
         <div class="log-box flex-grow-1" id="log-box">
-          <div class="line log-info">Pronto. Carregue uma planilha para começar.</div>
+          <div class="line log-info">Pronto. Cole uma lista ou carregue uma planilha para começar.</div>
         </div>
       </div>
     </div>
@@ -611,7 +669,7 @@ Retorne APENAS o CSV pronto, sem explicações.</pre>
             <div class="text-center px-3">
               <i class="bi bi-inbox fs-1 d-block mb-2"></i>
               <div class="fw-semibold">Nenhuma mensagem pendente encontrada</div>
-              <div class="small">Carregue uma planilha ou limpe o filtro da busca.</div>
+              <div class="small">Carregue uma lista, planilha ou limpe o filtro da busca.</div>
             </div>
           </div>
         </div>
@@ -673,6 +731,14 @@ function onFileSelect(input) {
   label.textContent = input.files.length ? input.files[0].name : '';
 }
 
+function updateManualReady() {
+  const btn = document.getElementById('btn-manual-load');
+  if (!btn || isSending) return;
+  const hasNumbers = document.getElementById('manual-numbers').value.trim().length > 0;
+  const hasMessage = document.getElementById('manual-message').value.trim().length > 0;
+  btn.disabled = !(hasNumbers && hasMessage);
+}
+
 // ─────────────────────────────────────────────
 // Status refresh
 // ─────────────────────────────────────────────
@@ -709,7 +775,9 @@ async function refreshStatus() {
     document.getElementById('btn-stop').disabled  = !isSending;
     document.getElementById('btn-retry').disabled = isSending;
     document.getElementById('btn-load').disabled  = isSending;
+    document.getElementById('btn-manual-load').disabled = isSending;
     document.getElementById('btn-preview').disabled = isSending || pending === 0;
+    if (!isSending) updateManualReady();
 
     // Sessão WhatsApp
     const label = document.getElementById('wa-session-label');
@@ -973,6 +1041,63 @@ function connectSSE() {
 // ─────────────────────────────────────────────
 // Ações
 // ─────────────────────────────────────────────
+async function loadManual() {
+  const numbersEl = document.getElementById('manual-numbers');
+  const messageEl = document.getElementById('manual-message');
+  const numbers = numbersEl.value.trim();
+  const message = messageEl.value.trim();
+
+  if (!numbers) {
+    log('Cole pelo menos um número no modo fácil.', 'log-warn');
+    numbersEl.focus();
+    return;
+  }
+  if (!message) {
+    log('Digite a mensagem que será enviada para os números.', 'log-warn');
+    messageEl.focus();
+    return;
+  }
+
+  const btn = document.getElementById('btn-manual-load');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Carregando lista…';
+
+  try {
+    const r = await fetch('/api/load_manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ numbers, message }),
+    });
+    const data = await r.json();
+
+    if (data.error) {
+      log('ERRO ao carregar lista: ' + data.error, 'log-fail');
+      if (data.detail) log('  Detalhe: ' + data.detail, 'log-fail');
+      if (data.errors && data.errors.length) {
+        data.errors.forEach(e => log('  • ' + e, 'log-fail'));
+      }
+      return;
+    }
+
+    log(`Lista fácil carregada — ${data.parsed} número(s) identificado(s), ${data.inserted} novo(s), ${data.skipped} já existente(s).`, 'log-ok');
+    if (data.warnings && data.warnings.length) {
+      log(`${data.warnings.length} aviso(s) na lista:`, 'log-warn');
+      data.warnings.forEach(w => log('  • ' + w, 'log-warn'));
+    }
+
+    showToast(`✅ ${data.parsed} número(s) carregado(s) para envio!`);
+    numbersEl.value = '';
+    updateManualReady();
+    await refreshStatus();
+    await openPreview();
+  } catch (e) {
+    log('Erro de comunicação: ' + e.message, 'log-fail');
+  } finally {
+    btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Carregar lista fácil';
+    updateManualReady();
+  }
+}
+
 async function loadFile() {
   const input = document.getElementById('csv-input');
   if (!input.files.length) {
@@ -1282,7 +1407,7 @@ function updateConfigEstimate() {
     document.getElementById('cfg-estimate-count').textContent = '0 mensagens';
     document.getElementById('cfg-estimate-batches').textContent = '-';
     document.getElementById('cfg-estimate-pace').textContent = `~${Math.round(((cfg.delayMin + cfg.delayMax) / 2) + 3)}s/msg`;
-    document.getElementById('cfg-estimate-detail').textContent = 'Carregue uma planilha para calcular a fila.';
+    document.getElementById('cfg-estimate-detail').textContent = 'Carregue contatos para calcular a fila.';
     warningEl.style.display = 'none';
     return;
   }

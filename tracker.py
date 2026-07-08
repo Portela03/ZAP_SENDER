@@ -63,6 +63,17 @@ def get_pending(limit: int, db_path: str) -> list:
     return [dict(r) for r in rows]
 
 
+def get_pending_preview(db_path: str) -> list:
+    """Retorna todos os contatos pendentes que ainda serão enviados."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            'SELECT id, nome, numero, mensagem FROM campaign '
+            'WHERE status = ? ORDER BY id',
+            ('pending',),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def mark_sent(contact_id: int, db_path: str):
     with _connect(db_path) as conn:
         conn.execute(

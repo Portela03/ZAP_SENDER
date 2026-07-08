@@ -40,6 +40,36 @@
     .file-name { font-size: .82rem; color: #555; margin-top: 6px; word-break: break-all; }
     .progress-bar-wa { background: #25d366; }
     #progress-bar-wrap { display: none; }
+    .preview-modal .modal-body { min-height: 0; }
+    .preview-toolbar { background: #f8fafc; }
+    .preview-table-wrap { min-height: 0; overflow: auto; }
+    .preview-table { min-width: 900px; }
+    .preview-table thead th {
+      position: sticky; top: 0; z-index: 2;
+      background: #f8f9fa; box-shadow: inset 0 -1px 0 rgba(0,0,0,.08);
+    }
+    .preview-row-index { width: 64px; color: #6c757d; font-variant-numeric: tabular-nums; }
+    .preview-number { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .preview-message { white-space: pre-wrap; word-break: break-word; line-height: 1.35; }
+    .preview-empty { min-height: 220px; display: none; align-items: center; justify-content: center; }
+    @media (max-width: 575.98px) {
+      .preview-table { min-width: 0; }
+      .preview-table thead { display: none; }
+      .preview-table tbody tr {
+        display: block; padding: .75rem 1rem;
+        border-bottom: 1px solid #dee2e6;
+      }
+      .preview-table tbody td {
+        display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: .5rem;
+        border: 0; padding: .22rem 0;
+      }
+      .preview-table tbody td::before {
+        content: attr(data-label);
+        color: #6c757d; font-weight: 600; white-space: nowrap;
+      }
+      .preview-row-index { width: auto; }
+      .preview-number { white-space: normal; word-break: break-word; }
+    }
   </style>
 </head>
 <body>
@@ -150,6 +180,9 @@
         </div>
         <button class="btn btn-sm btn-primary w-100 mt-2" id="btn-load" onclick="loadFile()">
           <i class="bi bi-upload me-1"></i>Carregar Contatos
+        </button>
+        <button class="btn btn-sm btn-outline-success w-100 mt-2" id="btn-preview" onclick="openPreview()" disabled>
+          <i class="bi bi-arrows-fullscreen me-1"></i>Ver prévia em tela cheia
         </button>
       </div>
 
@@ -402,6 +435,69 @@ Retorne APENAS o CSV pronto, sem explicações.</pre>
   </div>
 </div>
 
+<!-- Modal de Prévia -->
+<div class="modal fade preview-modal" id="modalPreview" tabindex="-1" aria-labelledby="modalPreviewLabel" aria-hidden="true">
+  <div class="modal-dialog modal-fullscreen">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title" id="modalPreviewLabel">
+            <i class="bi bi-arrows-fullscreen me-2"></i>Prévia de Envio
+          </h5>
+          <div class="text-muted small" id="preview-subtitle">Mensagens pendentes para envio</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body d-flex flex-column p-0">
+        <div class="preview-toolbar border-bottom px-3 py-3">
+          <div class="row g-2 align-items-center">
+            <div class="col-lg-6">
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input type="search" class="form-control" id="preview-search"
+                       placeholder="Buscar por nome, número ou mensagem" oninput="renderPreview(this.value)">
+              </div>
+            </div>
+            <div class="col-lg-6">
+              <div class="d-flex flex-wrap gap-2 justify-content-lg-end">
+                <span class="badge text-bg-success px-3 py-2">
+                  <span id="preview-total">0</span> pendente(s)
+                </span>
+                <span class="badge text-bg-light border text-dark px-3 py-2">
+                  <span id="preview-shown">0</span> visível(is)
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="preview-table-wrap flex-grow-1">
+          <table class="table table-hover align-middle mb-0 preview-table" id="preview-table">
+            <thead>
+              <tr>
+                <th class="preview-row-index">#</th>
+                <th style="width:20%">Nome</th>
+                <th style="width:18%">Número</th>
+                <th>Mensagem que será enviada</th>
+              </tr>
+            </thead>
+            <tbody id="preview-tbody"></tbody>
+          </table>
+          <div class="preview-empty text-muted" id="preview-empty">
+            <div class="text-center px-3">
+              <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+              <div class="fw-semibold">Nenhuma mensagem pendente encontrada</div>
+              <div class="small">Carregue uma planilha ou limpe o filtro da busca.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ─────────────────────────────────────────────
 // Log helpers
@@ -484,6 +580,7 @@ async function refreshStatus() {
     document.getElementById('btn-stop').disabled  = !isSending;
     document.getElementById('btn-retry').disabled = isSending;
     document.getElementById('btn-load').disabled  = isSending;
+    document.getElementById('btn-preview').disabled = isSending || pending === 0;
 
     // Sessão WhatsApp
     const label = document.getElementById('wa-session-label');
@@ -777,7 +874,8 @@ async function loadFile() {
       showToast(`✅ ${data.inserted} novo(s) + ${data.skipped} resetado(s) para pendente!`);
       document.getElementById('file-name-label').textContent = '';
       input.value = '';
-      refreshStatus();
+      await refreshStatus();
+      await openPreview();
     }
   } catch (e) {
     log('Erro de comunicação: ' + e.message, 'log-fail');
@@ -927,6 +1025,90 @@ function copyPrompt() {
     document.body.removeChild(ta);
     showToast('✅ Prompt copiado!');
   });
+}
+
+// ─────────────────────────────────────────────
+// Prévia de envio
+// ─────────────────────────────────────────────
+let previewContacts = [];
+
+async function openPreview() {
+  const modalEl = document.getElementById('modalPreview');
+  bootstrap.Modal.getOrCreateInstance(modalEl).show();
+
+  document.getElementById('preview-search').value = '';
+  document.getElementById('preview-subtitle').textContent = 'Carregando mensagens pendentes...';
+  document.getElementById('preview-total').textContent = '0';
+  document.getElementById('preview-shown').textContent = '0';
+  document.getElementById('preview-empty').style.display = 'none';
+  document.getElementById('preview-table').style.display = '';
+  document.getElementById('preview-tbody').innerHTML = `
+    <tr>
+      <td colspan="4" class="text-center text-muted py-5">
+        <span class="spinner-border spinner-border-sm me-2"></span>Carregando prévia...
+      </td>
+    </tr>
+  `;
+
+  try {
+    const r = await fetch('/api/preview', { cache: 'no-store' });
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    previewContacts = data.contacts || [];
+    renderPreview('');
+  } catch (e) {
+    previewContacts = [];
+    document.getElementById('preview-subtitle').textContent = 'Não foi possível carregar a prévia';
+    document.getElementById('preview-table').style.display = '';
+    document.getElementById('preview-empty').style.display = 'none';
+    document.getElementById('preview-tbody').innerHTML = `
+      <tr>
+        <td colspan="4" class="text-danger py-4">
+          Erro ao carregar prévia: ${escHtml(e.message)}
+        </td>
+      </tr>
+    `;
+  }
+}
+
+function renderPreview(filter = '') {
+  const q = String(filter || '').trim().toLowerCase();
+  const indexedContacts = previewContacts.map((contact, index) => ({ contact, order: index + 1 }));
+  const rows = q
+    ? indexedContacts.filter(({ contact: c }) => (
+        String(c.nome || '').toLowerCase().includes(q) ||
+        String(c.numero || '').toLowerCase().includes(q) ||
+        String(c.mensagem || '').toLowerCase().includes(q)
+      ))
+    : indexedContacts;
+
+  document.getElementById('preview-total').textContent = previewContacts.length;
+  document.getElementById('preview-shown').textContent = rows.length;
+  document.getElementById('preview-subtitle').textContent = previewContacts.length
+    ? `${previewContacts.length} mensagem(ns) pendente(s) serão enviadas na ordem abaixo.`
+    : 'Nenhuma mensagem pendente para envio.';
+
+  const table = document.getElementById('preview-table');
+  const empty = document.getElementById('preview-empty');
+  const tbody = document.getElementById('preview-tbody');
+
+  if (!rows.length) {
+    table.style.display = 'none';
+    empty.style.display = 'flex';
+    tbody.innerHTML = '';
+    return;
+  }
+
+  table.style.display = '';
+  empty.style.display = 'none';
+  tbody.innerHTML = rows.map(({ contact: c, order }) => `
+    <tr>
+      <td class="preview-row-index" data-label="#">${order}</td>
+      <td class="fw-semibold" data-label="Nome">${escHtml(c.nome || '-')}</td>
+      <td data-label="Número"><code class="preview-number">${escHtml(c.numero || '-')}</code></td>
+      <td class="preview-message" data-label="Mensagem">${escHtml(c.mensagem || '-')}</td>
+    </tr>
+  `).join('');
 }
 
 // ─────────────────────────────────────────────

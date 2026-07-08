@@ -748,6 +748,16 @@ def _run_send(user_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Health check — evita spin-down no Render Free Tier
+# Pinge este endpoint a cada ~10 min com UptimeRobot ou similar
+# ---------------------------------------------------------------------------
+
+@app.route('/health')
+def health():
+    return jsonify(status='ok'), 200
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

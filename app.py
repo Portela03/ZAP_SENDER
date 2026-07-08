@@ -599,6 +599,16 @@ def _run_send(user_id: str):
 
     _push_event(user_id, 'info', message=f'Iniciando lote: {len(pending)} mensagem(s) | {already}/{total_all} já enviadas | Hoje: {sent_today}/{daily_limit}')
 
+    delay_min = int(config.get('delay_min_seconds', 20))
+    delay_max = int(config.get('delay_max_seconds', 60))
+    _push_event(user_id, 'estimate',
+                batch_count=len(pending),
+                total_remaining=min(summary.get('pending', 0), remaining_today),
+                delay_min=delay_min,
+                delay_max=delay_max,
+                batch_size=batch_size,
+                batch_pause_minutes=batch_pause_minutes)
+
     if not os.path.exists(NODE_SCRIPT):
         _push_event(user_id, 'error', message='node/sender.js não encontrado. Execute o setup primeiro.')
         return
@@ -606,12 +616,15 @@ def _run_send(user_id: str):
     env = os.environ.copy()
     env['DATA_DIR'] = _get_user_data_dir(user_id)
 
+    env['PYTHONIOENCODING'] = 'utf-8'
+
     proc = subprocess.Popen(
         ['node', NODE_SCRIPT],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=None,
         text=True,
+        encoding='utf-8',
         bufsize=1,
         cwd=BASE_DIR,
         env=env,
@@ -749,12 +762,43 @@ def _run_send(user_id: str):
 
 # ---------------------------------------------------------------------------
 # Health check — evita spin-down no Render Free Tier
-# Pinge este endpoint a cada ~10 min com UptimeRobot ou similar
 # ---------------------------------------------------------------------------
 
 @app.route('/health')
 def health():
     return jsonify(status='ok'), 200
+
+
+# ---------------------------------------------------------------------------
+# Falhas de envio
+# ---------------------------------------------------------------------------
+
+@app.route('/api/failed')
+def api_failed():
+    user_id = session['user_id']
+    db_path = _get_db_path(user_id)
+    tracker.init_db(db_path)
+    return jsonify(failed=tracker.get_failed(db_path))
+
+
+@app.route('/api/failed/csv')
+def api_failed_csv():
+    import io
+    import csv as _csv
+    user_id = session['user_id']
+    db_path = _get_db_path(user_id)
+    tracker.init_db(db_path)
+    failed = tracker.get_failed(db_path)
+    buf = io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(['nome', 'numero', 'mensagem', 'motivo'])
+    for c in failed:
+        w.writerow([c['nome'], c['numero'], c.get('mensagem', ''), c.get('erro', '')])
+    return Response(
+        '\ufeff' + buf.getvalue(),   # BOM para Excel abrir em UTF-8
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': 'attachment; filename=falhas.csv'},
+    )
 
 
 # ---------------------------------------------------------------------------

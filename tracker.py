@@ -104,3 +104,13 @@ def get_sent_today(db_path: str) -> int:
             "WHERE status = 'sent' AND date(enviado_em) = date('now')"
         ).fetchone()
     return row['cnt'] if row else 0
+
+
+def get_failed(db_path: str) -> list:
+    """Retorna todos os contatos com falha, incluindo nome, número, mensagem e erro."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT nome, numero, mensagem, erro FROM campaign "
+            "WHERE status = 'failed' ORDER BY id"
+        ).fetchall()
+    return [dict(r) for r in rows]

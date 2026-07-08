@@ -104,6 +104,22 @@
     </div>
   </div>
 
+  <!-- Estimativa de tempo (mostrado durante envio) -->
+  <div id="eta-card" class="card p-3 mb-3" style="display:none; border-left:4px solid #25d366;">
+    <div class="row g-0 text-center">
+      <div class="col" id="eta-batch-col">
+        <div class="text-muted small mb-1"><i class="bi bi-send text-success me-1"></i>Este lote</div>
+        <div class="fw-semibold small" id="eta-batch-time">–</div>
+        <div class="text-muted" style="font-size:.72rem;" id="eta-batch-end"></div>
+      </div>
+      <div class="col border-start" id="eta-total-col" style="display:none;">
+        <div class="text-muted small mb-1"><i class="bi bi-collection text-primary me-1"></i>Total completo</div>
+        <div class="fw-semibold small" id="eta-total-time">–</div>
+        <div class="text-muted" style="font-size:.72rem;" id="eta-total-end"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="row g-3">
 
     <!-- Left column -->
@@ -204,6 +220,36 @@
     </div>
 
   </div><!-- /row -->
+
+  <!-- Painel de Falhas -->
+  <div id="failed-panel" class="card p-4 mt-3" style="display:none; border-left:4px solid #dc3545;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h6 class="fw-semibold mb-0 text-danger">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i>Falhas de Envio
+        <span class="badge bg-danger ms-1" id="failed-count-badge">0</span>
+      </h6>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-secondary" onclick="copyFailed()">
+          <i class="bi bi-clipboard me-1"></i>Copiar lista
+        </button>
+        <button class="btn btn-sm btn-outline-danger" onclick="downloadFailed()">
+          <i class="bi bi-download me-1"></i>Baixar CSV
+        </button>
+      </div>
+    </div>
+    <div class="table-responsive" style="max-height:280px; overflow-y:auto;">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light sticky-top">
+          <tr>
+            <th style="width:25%">Nome</th>
+            <th style="width:25%">Número</th>
+            <th>Motivo</th>
+          </tr>
+        </thead>
+        <tbody id="failed-tbody"></tbody>
+      </table>
+    </div>
+  </div>
 
   <div class="text-center text-muted mt-4" style="font-size:.72rem;">
     WhatsApp Sender &bull; Interface local &bull; Acesso somente neste computador
@@ -546,6 +592,83 @@ function updateProgressBar(index, total) {
 }
 
 // ─────────────────────────────────────────────
+// Estimativa de tempo (ETA)
+// ─────────────────────────────────────────────
+let etaData      = null;
+let etaStartTime = null;
+let etaMsgsDone  = 0;
+let etaInterval  = null;
+
+function fmtDuration(secs) {
+  if (secs < 60)   return `${Math.round(secs)}s`;
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (h > 0) return `${h}h ${m}min`;
+  return `${m} min`;
+}
+
+function fmtDatetime(date) {
+  const now      = new Date();
+  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1);
+  const time = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  if (date.toDateString() === now.toDateString())      return `hoje às ${time}`;
+  if (date.toDateString() === tomorrow.toDateString()) return `amanhã às ${time}`;
+  return date.toLocaleDateString('pt-BR') + ' ' + time;
+}
+
+function initEta(data) {
+  etaData      = data;
+  etaStartTime = Date.now();
+  etaMsgsDone  = 0;
+  document.getElementById('eta-card').style.display = '';
+  if (etaInterval) clearInterval(etaInterval);
+  etaInterval = setInterval(updateEta, 8000);
+  updateEta();
+}
+
+function clearEta() {
+  document.getElementById('eta-card').style.display = 'none';
+  if (etaInterval) { clearInterval(etaInterval); etaInterval = null; }
+  etaData = null; etaMsgsDone = 0; etaStartTime = null;
+}
+
+function updateEta() {
+  if (!etaData) return;
+  const { batch_count, total_remaining, delay_min, delay_max, batch_size, batch_pause_minutes } = etaData;
+
+  const elapsedSec = (Date.now() - etaStartTime) / 1000;
+  // Usa velocidade real se já enviou alguma, senão usa média estimada (+3s overhead)
+  const avgPerMsg  = etaMsgsDone > 0
+    ? elapsedSec / etaMsgsDone
+    : (delay_min + delay_max) / 2 + 3;
+
+  // ── Lote atual ──
+  const batchLeft = Math.max(0, batch_count - etaMsgsDone);
+  const batchSecs = batchLeft * avgPerMsg;
+  const batchEnd  = new Date(Date.now() + batchSecs * 1000);
+
+  document.getElementById('eta-batch-time').textContent =
+    batchLeft > 0 ? `~${fmtDuration(batchSecs)} (${batchLeft} msg)` : '✓ Lote concluído';
+  document.getElementById('eta-batch-end').textContent =
+    batchLeft > 0 ? `Conclusão: ${fmtDatetime(batchEnd)}` : '';
+
+  // ── Total completo (mostra só se há lotes futuros) ──
+  const totalLeft = Math.max(0, total_remaining - etaMsgsDone);
+  const afterThis = totalLeft - batchLeft;
+  if (afterThis > 0) {
+    document.getElementById('eta-total-col').style.display = '';
+    const extraBatches = Math.ceil(afterThis / batch_size);
+    const pauseSecs    = extraBatches * batch_pause_minutes * 60;
+    const totalSecs    = batchSecs + afterThis * avgPerMsg + pauseSecs;
+    const totalEnd     = new Date(Date.now() + totalSecs * 1000);
+    document.getElementById('eta-total-time').textContent = `~${fmtDuration(totalSecs)} (${totalLeft} msg)`;
+    document.getElementById('eta-total-end').textContent  = `Conclusão: ${fmtDatetime(totalEnd)}`;
+  } else {
+    document.getElementById('eta-total-col').style.display = 'none';
+  }
+}
+
+// ─────────────────────────────────────────────
 // SSE
 // ─────────────────────────────────────────────
 let evtSource = null;
@@ -579,12 +702,17 @@ function connectSSE() {
         fetchQR();
         break;
 
+      case 'estimate':
+        initEta(data);
+        break;
+
       case 'result': {
         const ok     = data.ok;
         const icon   = ok ? '✓' : '✗';
         const detail = data.detail ? ` (${data.detail})` : '';
         log(`[${data.index}/${data.total}] ${icon} ${data.nome}  ${data.numero}${detail}`,
             ok ? 'log-ok' : 'log-fail');
+        if (ok) { etaMsgsDone++; updateEta(); }
         updateProgressBar(data.index, data.total);
         refreshStatus();
         break;
@@ -594,10 +722,14 @@ function connectSSE() {
         log('─'.repeat(48), 'log-sep');
         log(data.message, data.failed > 0 ? 'log-warn' : 'log-ok');
         log('─'.repeat(48), 'log-sep');
+        if (!data.remaining || data.remaining === 0) clearEta();
+        loadFailed();
         refreshStatus();
         break;
 
       case 'done':
+        clearEta();
+        loadFailed();
         refreshStatus();
         break;
     }
@@ -798,9 +930,60 @@ function copyPrompt() {
 }
 
 // ─────────────────────────────────────────────
+// Falhas de envio
+// ─────────────────────────────────────────────
+let failedContacts = [];
+
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function loadFailed() {
+  try {
+    const r    = await fetch('/api/failed');
+    const data = await r.json();
+    failedContacts = data.failed || [];
+
+    const panel = document.getElementById('failed-panel');
+    if (!failedContacts.length) { panel.style.display = 'none'; return; }
+
+    document.getElementById('failed-count-badge').textContent = failedContacts.length;
+    document.getElementById('failed-tbody').innerHTML = failedContacts.map(c => `
+      <tr>
+        <td>${escHtml(c.nome)}</td>
+        <td><code class="small">${escHtml(c.numero)}</code></td>
+        <td class="text-danger small">${escHtml(c.erro || '–')}</td>
+      </tr>
+    `).join('');
+    panel.style.display = '';
+  } catch (e) { /* silencioso */ }
+}
+
+function copyFailed() {
+  if (!failedContacts.length) return;
+  const lines = [
+    'nome,numero,motivo',
+    ...failedContacts.map(c => `${c.nome},${c.numero},${c.erro || ''}`)
+  ].join('\n');
+  navigator.clipboard.writeText(lines)
+    .then(() => showToast('✅ Lista copiada!'))
+    .catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = lines; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      showToast('✅ Lista copiada!');
+    });
+}
+
+function downloadFailed() {
+  window.location.href = '/api/failed/csv';
+}
+
+// ─────────────────────────────────────────────
 // Init
 // ─────────────────────────────────────────────
 refreshStatus();
+loadFailed();
 setInterval(refreshStatus, 4000);
 connectSSE();
 </script>

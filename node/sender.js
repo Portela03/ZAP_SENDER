@@ -25,6 +25,10 @@ const require = createRequire(import.meta.url);
 const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
 
+// Garante saída UTF-8 no Windows
+process.stdout.setDefaultEncoding('utf8');
+process.stdin.setEncoding('utf8');
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AUTH_DIR   = process.env.DATA_DIR
   ? path.join(process.env.DATA_DIR, 'auth_info')

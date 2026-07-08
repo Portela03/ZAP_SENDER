@@ -30,18 +30,24 @@ def init_db():
 
 
 def upsert_contacts(contacts: list) -> tuple:
-    """Insert new contacts, skip duplicates (resume-safe)."""
+    """Insert new contacts or reset existing ones to pending (re-send safe)."""
     inserted = 0
     skipped = 0
     with _connect() as conn:
         for c in contacts:
-            try:
+            cur = conn.execute('SELECT id, status FROM campaign WHERE numero = ?', (c['numero'],)).fetchone()
+            if cur is None:
                 conn.execute(
                     'INSERT INTO campaign (nome, numero, mensagem) VALUES (?, ?, ?)',
                     (c['nome'], c['numero'], c['mensagem'])
                 )
                 inserted += 1
-            except sqlite3.IntegrityError:
+            else:
+                # Atualiza nome/mensagem e reseta status para pending
+                conn.execute(
+                    'UPDATE campaign SET nome=?, mensagem=?, status=?, tentativas=0, enviado_em=NULL, erro=NULL WHERE numero=?',
+                    (c['nome'], c['mensagem'], 'pending', c['numero'])
+                )
                 skipped += 1
     return inserted, skipped
 

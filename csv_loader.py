@@ -35,41 +35,51 @@ def normalize_phone(raw: str) -> str:
 
 def _read_csv(filepath: str) -> pd.DataFrame:
     """
-    Read a CSV file trying different separators and handling lines with
-    unquoted commas in message fields (graceful fallback).
+    Read a CSV file handling messages that contain unquoted commas by
+    treating everything after the 2nd comma as the message field.
     """
-    # 1st attempt: standard comma-separated
-    try:
-        return pd.read_csv(filepath, dtype=str)
-    except pd.errors.ParserError:
-        pass
-
-    # 2nd attempt: semicolon-separated (common in Brazilian Excel exports)
-    try:
-        df = pd.read_csv(filepath, dtype=str, sep=';')
-        if len(df.columns) >= 2:
-            return df
-    except pd.errors.ParserError:
-        pass
-
-    # 3rd attempt: skip malformed lines (e.g. unquoted commas inside fields)
-    df = pd.read_csv(filepath, dtype=str, on_bad_lines='skip')
-
-    # Count skipped lines and warn
+    rows = []
     try:
         with open(filepath, 'r', encoding='utf-8', errors='replace') as fh:
-            total_data_lines = sum(1 for _ in fh) - 1  # minus header
-        skipped = total_data_lines - len(df)
-        if skipped > 0:
-            print(
-                f"\n⚠ {skipped} linha(s) com vírgulas não protegidas foram ignoradas.\n"
-                "  Dica: se a mensagem contém vírgula, envolva-a com aspas duplas.\n"
-                '  Exemplo: João Silva,11999990001,"Olá, tudo bem?"\n'
-            )
+            lines = [ln.rstrip('\n\r') for ln in fh if ln.strip()]
     except Exception:
-        pass
+        return pd.read_csv(filepath, dtype=str)
 
-    return df
+    if not lines:
+        return pd.DataFrame()
+
+    # Detect header
+    header = [h.strip().lower() for h in lines[0].split(',')]
+    # Determine column positions by name or positional fallback
+    try:
+        i_nome = header.index('nome')
+        i_num  = header.index('numero')
+        i_msg  = header.index('mensagem')
+    except ValueError:
+        i_nome, i_num, i_msg = 0, 1, 2
+
+    ignored = 0
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        parts = line.split(',')
+        if len(parts) < 3:
+            ignored += 1
+            continue
+        nome    = parts[i_nome].strip()
+        numero  = parts[i_num].strip()
+        # Junta todos os campos restantes como mensagem (lida com vírgulas internas)
+        msg_parts = parts[i_msg:] if i_msg < len(parts) else parts[2:]
+        mensagem = ','.join(msg_parts).strip().strip('"')
+        if not nome or not numero or not mensagem:
+            ignored += 1
+            continue
+        rows.append({'nome': nome, 'numero': numero, 'mensagem': mensagem})
+
+    if ignored > 0:
+        print(f"\n⚠ {ignored} linha(s) ignoradas (campos insuficientes).\n")
+
+    return pd.DataFrame(rows)
 
 
 def load_contacts(filepath: str) -> list:

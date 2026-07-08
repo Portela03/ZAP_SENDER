@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: whatsapp-sender
+    runtime: docker
+    # plan: starter   # descomente para plano pago ($7/mês) — necessário para disco persistente
+    # plan: free      # gratuito: funciona, mas perde sessão WA ao reiniciar (re-escaneie o QR)
+    envVars:
+      - key: ACCESS_PASSWORD
+        sync: false          # você define manualmente no painel do Render
+      - key: SECRET_KEY
+        generateValue: true  # gerado automaticamente pelo Render
+      - key: RENDER
+        value: "true"
+      - key: DATA_DIR
+        value: /data
+    # disk:                  # descomente junto com plan: starter para sessão persistente
+    #   name: whatsapp-data
+    #   mountPath: /data
+    #   sizeGB: 1

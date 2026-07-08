@@ -1,0 +1,7 @@
+{
+  "message_template": "Olá {nome}, {mensagem}",
+  "batch_size": 50,
+  "delay_min_seconds": 15,
+  "delay_max_seconds": 45,
+  "batch_pause_minutes": 60
+}

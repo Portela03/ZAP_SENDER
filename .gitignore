@@ -1,0 +1,10 @@
+node/auth_info/
+node/node_modules/
+__pycache__/
+*.pyc
+*.pyo
+campaign.db
+_upload_temp*
+.env
+*.zip
+*.log

@@ -1,0 +1,30 @@
+# Dependências (instaladas dentro do container, não precisam ser copiadas)
+node/node_modules/
+
+# Sessão pessoal do WhatsApp — cada instância tem a sua
+node/auth_info/
+
+# Banco de dados de contatos — fica no disco persistente do servidor
+campaign.db
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Upload temporário
+_upload_temp*
+
+# Arquivos só para Windows local
+*.bat
+*.ps1
+Exportar.bat
+setup.ps1
+
+# Git
+.git/
+.gitignore
+
+# Outros
+*.zip
+*.log

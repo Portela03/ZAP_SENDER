@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Sender</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    body { background: #f0f2f5; min-height: 100vh; }
+    .card { border: none; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.09); }
+    .stat-card { transition: transform .15s; cursor: default; }
+    .stat-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.12); }
+    .stat-number { font-size: 2.2rem; font-weight: 700; line-height: 1; }
+    .log-box {
+      height: 320px; overflow-y: auto;
+      background: #0d1117; border-radius: 8px;
+      padding: 12px 14px; font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 0.80rem; color: #c9d1d9;
+    }
+    .log-box .line { margin-bottom: 1px; white-space: pre-wrap; word-break: break-all; }
+    .log-ok   { color: #3fb950; }
+    .log-fail { color: #f85149; }
+    .log-info { color: #58a6ff; }
+    .log-warn { color: #d29922; }
+    .log-sep  { color: #444; }
+    #qr-section { display: none; }
+    #qr-img { max-width: 210px; border-radius: 8px; border: 4px solid #fff; }
+    .btn-wa { background: #25d366; color: #fff; border: none; font-weight: 600; }
+    .btn-wa:hover:not(:disabled) { background: #1dae52; color: #fff; }
+    .btn-wa:disabled { background: #a8dfc1; color: #fff; }
+    .navbar-brand img { width: 28px; margin-right: 8px; }
+    .drop-zone {
+      border: 2px dashed #ccc; border-radius: 8px; padding: 18px 12px;
+      text-align: center; cursor: pointer; transition: all .2s;
+      background: #fafafa;
+    }
+    .drop-zone.dragover { border-color: #25d366; background: #eafbf0; }
+    .drop-zone input { display: none; }
+    .file-name { font-size: .82rem; color: #555; margin-top: 6px; word-break: break-all; }
+    .progress-bar-wa { background: #25d366; }
+    #progress-bar-wrap { display: none; }
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar navbar-dark py-2" style="background:#075E54;">
+  <div class="container-lg">
+    <span class="navbar-brand fw-bold fs-5">
+      <i class="bi bi-chat-dots-fill me-2"></i>WhatsApp Sender
+    </span>
+    <span class="badge rounded-pill text-bg-light text-dark" id="status-badge" style="display:none;"></span>
+  </div>
+</nav>
+
+<div class="container-lg py-4">
+
+  <!-- Status Cards -->
+  <div class="row g-3 mb-4">
+    <div class="col-4">
+      <div class="card stat-card p-3 text-center">
+        <div class="stat-number text-warning" id="cnt-pending">–</div>
+        <div class="text-muted small mt-1">Pendentes</div>
+      </div>
+    </div>
+    <div class="col-4">
+      <div class="card stat-card p-3 text-center">
+        <div class="stat-number text-success" id="cnt-sent">–</div>
+        <div class="text-muted small mt-1">Enviadas</div>
+      </div>
+    </div>
+    <div class="col-4">
+      <div class="card stat-card p-3 text-center">
+        <div class="stat-number text-danger" id="cnt-failed">–</div>
+        <div class="text-muted small mt-1">Falhas</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress bar (shown while sending) -->
+  <div id="progress-bar-wrap" class="mb-3">
+    <div class="d-flex justify-content-between small text-muted mb-1">
+      <span id="prog-label">Enviando…</span>
+      <span id="prog-pct">0%</span>
+    </div>
+    <div class="progress" style="height:8px; border-radius:8px;">
+      <div class="progress-bar progress-bar-wa progress-bar-striped progress-bar-animated"
+           id="prog-bar" role="progressbar" style="width:0%"></div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+
+    <!-- Left column -->
+    <div class="col-lg-5">
+
+      <!-- Upload -->
+      <div class="card p-4 mb-3">
+        <h6 class="fw-semibold mb-3">
+          <i class="bi bi-file-earmark-spreadsheet text-success me-1"></i>Carregar Planilha
+        </h6>
+        <div class="drop-zone" id="drop-zone" onclick="document.getElementById('csv-input').click()"
+             ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+          <i class="bi bi-cloud-upload fs-3 text-secondary"></i>
+          <div class="text-muted small mt-1">Arraste o arquivo aqui ou <strong>clique para selecionar</strong></div>
+          <div class="text-muted" style="font-size:.72rem;">CSV, XLSX ou XLS</div>
+          <input type="file" id="csv-input" accept=".csv,.xlsx,.xls" onchange="onFileSelect(this)">
+          <div class="file-name" id="file-name-label"></div>
+        </div>
+        <button class="btn btn-sm btn-primary w-100 mt-2" id="btn-load" onclick="loadFile()">
+          <i class="bi bi-upload me-1"></i>Carregar Contatos
+        </button>
+      </div>
+
+      <!-- Actions -->
+      <div class="card p-4 mb-3">
+        <h6 class="fw-semibold mb-3">
+          <i class="bi bi-send text-primary me-1"></i>Controles de Envio
+        </h6>
+        <div class="d-grid gap-2">
+          <button class="btn btn-wa btn-lg" id="btn-send" onclick="startSend()">
+            <i class="bi bi-play-fill me-1"></i>Enviar Mensagens
+          </button>
+          <button class="btn btn-outline-danger btn-sm" id="btn-stop" onclick="stopSend()" disabled>
+            <i class="bi bi-stop-fill me-1"></i>Parar Envio
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" id="btn-retry" onclick="retryFailed()">
+            <i class="bi bi-arrow-clockwise me-1"></i>Retentar Falhas
+          </button>
+        </div>
+        <hr class="my-3">
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <span class="small fw-semibold">Sessão WhatsApp</span><br>
+            <span class="small" id="wa-session-label">–</span>
+          </div>
+          <button class="btn btn-sm btn-outline-danger" id="btn-disconnect" onclick="disconnectWA()" style="display:none;">
+            <i class="bi bi-box-arrow-right me-1"></i>Desconectar
+          </button>
+          <button class="btn btn-sm btn-success" id="btn-connect" onclick="connectWA()" style="display:none;">
+            <i class="bi bi-qr-code-scan me-1"></i>Conectar
+          </button>
+        </div>
+      </div>
+
+      <!-- QR Code -->
+      <div class="card p-4 text-center" id="qr-section">
+        <h6 class="fw-semibold mb-1">
+          <i class="bi bi-qr-code me-1"></i>Escaneie o QR Code
+        </h6>
+        <p class="text-muted small mb-3">
+          Abra o WhatsApp &rarr; ⋮ &rarr; <strong>Dispositivos conectados</strong> &rarr; Conectar dispositivo
+        </p>
+        <div id="qr-spinner" class="py-3">
+          <div class="spinner-border text-success" role="status" style="width:2.5rem;height:2.5rem;"></div>
+          <div class="small text-muted mt-2">Gerando QR code…</div>
+        </div>
+        <img id="qr-img" src="" alt="QR Code" class="d-none mx-auto d-block mb-2" style="max-width:220px; border-radius:8px; border:4px solid #fff;">
+        <div class="text-muted" style="font-size:.72rem;">O QR expira em ~60 segundos — escaneie rapidamente</div>
+      </div>
+
+    </div>
+
+    <!-- Right column: Log -->
+    <div class="col-lg-7">
+      <div class="card p-4 h-100 d-flex flex-column">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h6 class="fw-semibold mb-0">
+            <i class="bi bi-terminal me-1"></i>Log de Envio
+          </h6>
+          <button class="btn btn-outline-secondary btn-sm" onclick="clearLog()">
+            <i class="bi bi-trash me-1"></i>Limpar
+          </button>
+        </div>
+        <div class="log-box flex-grow-1" id="log-box">
+          <div class="line log-info">Pronto. Carregue uma planilha para começar.</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /row -->
+
+  <div class="text-center text-muted mt-4" style="font-size:.72rem;">
+    WhatsApp Sender &bull; Interface local &bull; Acesso somente neste computador
+  </div>
+
+</div><!-- /container -->
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ─────────────────────────────────────────────
+// Log helpers
+// ─────────────────────────────────────────────
+function ts() {
+  return new Date().toLocaleTimeString('pt-BR');
+}
+
+function log(msg, cls = '') {
+  const box = document.getElementById('log-box');
+  const d = document.createElement('div');
+  d.className = 'line ' + cls;
+  d.textContent = `[${ts()}] ${msg}`;
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('log-box').innerHTML = '';
+}
+
+// ─────────────────────────────────────────────
+// Drag-and-drop upload
+// ─────────────────────────────────────────────
+function onDragOver(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.add('dragover');
+}
+function onDragLeave(e) {
+  document.getElementById('drop-zone').classList.remove('dragover');
+}
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('dragover');
+  const files = e.dataTransfer.files;
+  if (files.length) {
+    document.getElementById('csv-input').files = files;
+    document.getElementById('file-name-label').textContent = files[0].name;
+  }
+}
+function onFileSelect(input) {
+  const label = document.getElementById('file-name-label');
+  label.textContent = input.files.length ? input.files[0].name : '';
+}
+
+// ─────────────────────────────────────────────
+// Status refresh
+// ─────────────────────────────────────────────
+let isSending = false;
+let totalSent = 0;
+let totalAll  = 0;
+
+async function refreshStatus() {
+  try {
+    const r    = await fetch('/api/status');
+    const data = await r.json();
+    const s    = data.summary || {};
+
+    const pending = s.pending ?? 0;
+    const sent    = s.sent    ?? 0;
+    const failed  = s.failed  ?? 0;
+
+    document.getElementById('cnt-pending').textContent = pending;
+    document.getElementById('cnt-sent').textContent    = sent;
+    document.getElementById('cnt-failed').textContent  = failed;
+
+    isSending = data.send_running;
+    totalAll  = pending + sent + failed;
+    totalSent = sent;
+
+    document.getElementById('btn-send').disabled  = isSending;
+    document.getElementById('btn-stop').disabled  = !isSending;
+    document.getElementById('btn-retry').disabled = isSending;
+    document.getElementById('btn-load').disabled  = isSending;
+
+    // Sessão WhatsApp
+    const label = document.getElementById('wa-session-label');
+    const btnDc = document.getElementById('btn-disconnect');
+    const btnCn = document.getElementById('btn-connect');
+    if (data.session_exists) {
+      label.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>Conectado</span>';
+      btnDc.style.display = isSending ? 'none' : '';
+      btnCn.style.display = 'none';
+    } else {
+      label.innerHTML = '<span class="text-muted"><i class="bi bi-dash-circle me-1"></i>Não conectado</span>';
+      btnDc.style.display = 'none';
+      btnCn.style.display = isSending ? 'none' : '';
+    }
+
+    // Badge
+    const badge = document.getElementById('status-badge');
+    if (isSending) {
+      badge.textContent = 'Enviando…';
+      badge.style.display = '';
+    } else {
+      badge.style.display = 'none';
+    }
+
+    // QR section
+    if (!isSending) showQrSection(false);
+    if (data.has_qr) { showQrSection(true); fetchQR(); }
+
+  } catch (e) { /* servidor pode estar iniciando */ }
+}
+
+// ─────────────────────────────────────────────
+// QR Code
+// ─────────────────────────────────────────────
+function showQrSection(show) {
+  const el = document.getElementById('qr-section');
+  el.style.display = show ? 'block' : 'none';
+  if (show) {
+    document.getElementById('qr-spinner').classList.remove('d-none');
+    document.getElementById('qr-img').classList.add('d-none');
+  }
+}
+
+async function fetchQR() {
+  try {
+    const r    = await fetch('/api/qr');
+    const data = await r.json();
+    if (!data.qr) return;
+
+    const img    = document.getElementById('qr-img');
+    const canvas = document.getElementById('qr-canvas');
+
+    const showImg = (src) => {
+      img.src = src;
+      img.onload = () => {
+        img.classList.remove('d-none');
+        canvas.classList.add('d-none');
+        document.getElementById('qr-spinner').classList.add('d-none');
+      };
+    };
+
+    if (data.qr.startsWith('data:')) {
+      // PNG base64 gerado pelo Python — exibe direto
+      showImg(data.qr);
+    } else {
+      // String bruta — gera no browser com QRCode.js
+      if (typeof QRCode !== 'undefined' && QRCode.toDataURL) {
+        QRCode.toDataURL(data.qr, { width: 220, margin: 2 }, (err, url) => {
+          if (!err) showImg(url);
+        });
+      } else if (typeof QRCode !== 'undefined') {
+        QRCode.toCanvas(canvas, data.qr, { width: 220, margin: 2 }, (err) => {
+          if (!err) {
+            canvas.classList.remove('d-none');
+            img.classList.add('d-none');
+            document.getElementById('qr-spinner').classList.add('d-none');
+          }
+        });
+      }
+    }
+  } catch (e) {}
+}
+
+// ─────────────────────────────────────────────
+// Progress bar
+// ─────────────────────────────────────────────
+function updateProgressBar(index, total) {
+  const wrap = document.getElementById('progress-bar-wrap');
+  const bar  = document.getElementById('prog-bar');
+  const pct  = document.getElementById('prog-pct');
+  const lbl  = document.getElementById('prog-label');
+
+  if (!total) { wrap.style.display = 'none'; return; }
+  const p = Math.round((index / total) * 100);
+  wrap.style.display = '';
+  bar.style.width    = p + '%';
+  pct.textContent    = p + '%';
+  lbl.textContent    = `Enviando ${index} de ${total}…`;
+
+  if (index >= total) {
+    setTimeout(() => { wrap.style.display = 'none'; }, 3000);
+  }
+}
+
+// ─────────────────────────────────────────────
+// SSE
+// ─────────────────────────────────────────────
+let evtSource = null;
+
+function connectSSE() {
+  if (evtSource) evtSource.close();
+  evtSource = new EventSource('/api/progress');
+
+  evtSource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+
+    switch (data.type) {
+      case 'ping': break;
+
+      case 'info':
+        log(data.message, 'log-info');
+        break;
+
+      case 'connected':
+        log(data.message, 'log-info');
+        showQrSection(false);
+        break;
+
+      case 'error':
+        log('ERRO: ' + data.message, 'log-fail');
+        document.getElementById('progress-bar-wrap').style.display = 'none';
+        break;
+
+      case 'qr':
+        showQrSection(true);
+        fetchQR();
+        break;
+
+      case 'result': {
+        const ok     = data.ok;
+        const icon   = ok ? '✓' : '✗';
+        const detail = data.detail ? ` (${data.detail})` : '';
+        log(`[${data.index}/${data.total}] ${icon} ${data.nome}  ${data.numero}${detail}`,
+            ok ? 'log-ok' : 'log-fail');
+        updateProgressBar(data.index, data.total);
+        refreshStatus();
+        break;
+      }
+
+      case 'batch_done':
+        log('─'.repeat(48), 'log-sep');
+        log(data.message, data.failed > 0 ? 'log-warn' : 'log-ok');
+        log('─'.repeat(48), 'log-sep');
+        refreshStatus();
+        break;
+
+      case 'done':
+        refreshStatus();
+        break;
+    }
+  };
+
+  evtSource.onerror = () => {
+    // Reconecta silenciosamente após 3s
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+// ─────────────────────────────────────────────
+// Ações
+// ─────────────────────────────────────────────
+async function loadFile() {
+  const input = document.getElementById('csv-input');
+  if (!input.files.length) {
+    log('Selecione um arquivo CSV ou Excel antes de carregar.', 'log-warn');
+    return;
+  }
+
+  const btn = document.getElementById('btn-load');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Carregando…';
+
+  const form = new FormData();
+  form.append('file', input.files[0]);
+
+  try {
+    const r    = await fetch('/api/load', { method: 'POST', body: form });
+    const data = await r.json();
+    if (data.error) {
+      log('ERRO ao carregar: ' + data.error, 'log-fail');
+    } else {
+      log(`Planilha carregada — ${data.inserted} novo(s), ${data.skipped} já existente(s).`, 'log-ok');
+      document.getElementById('file-name-label').textContent = '';
+      input.value = '';
+      refreshStatus();
+    }
+  } catch (e) {
+    log('Erro de comunicação: ' + e.message, 'log-fail');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-upload me-1"></i>Carregar Contatos';
+  }
+}
+
+async function startSend() {
+  try {
+    const r    = await fetch('/api/send', { method: 'POST' });
+    const data = await r.json();
+    if (data.error) {
+      log('ERRO: ' + data.error, 'log-warn');
+    } else {
+      refreshStatus();
+    }
+  } catch (e) {
+    log('Erro ao iniciar envio: ' + e.message, 'log-fail');
+  }
+}
+
+async function stopSend() {
+  if (!confirm('Parar o envio atual?')) return;
+  try {
+    await fetch('/api/stop', { method: 'POST' });
+    log('Parada solicitada.', 'log-warn');
+  } catch (e) {}
+}
+
+async function retryFailed() {
+  try {
+    const r    = await fetch('/api/retry', { method: 'POST' });
+    const data = await r.json();
+    if (data.error) {
+      log('AVISO: ' + data.error, 'log-warn');
+    } else {
+      log(`${data.reset} mensagem(s) redefinida(s) para pendente.`, 'log-info');
+      refreshStatus();
+    }
+  } catch (e) {
+    log('Erro: ' + e.message, 'log-fail');
+  }
+}
+
+async function disconnectWA() {
+  if (!confirm('Desconectar o WhatsApp?\nA sessão atual será apagada e você precisará escanear o QR novamente.')) return;
+  try {
+    const r    = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
+    const data = await r.json();
+    if (data.error) {
+      log('ERRO: ' + data.error, 'log-fail');
+    } else {
+      log('Sessão WhatsApp encerrada. Clique em Conectar para reconectar.', 'log-warn');
+      refreshStatus();
+    }
+  } catch (e) {
+    log('Erro: ' + e.message, 'log-fail');
+  }
+}
+
+async function connectWA() {
+  try {
+    const r    = await fetch('/api/whatsapp/connect', { method: 'POST' });
+    const data = await r.json();
+    if (data.error) {
+      log('ERRO: ' + data.error, 'log-warn');
+    } else {
+      refreshStatus();
+    }
+  } catch (e) {
+    log('Erro ao conectar: ' + e.message, 'log-fail');
+  }
+}
+
+// ─────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────
+refreshStatus();
+setInterval(refreshStatus, 4000);
+connectSSE();
+</script>
+</body>
+</html>

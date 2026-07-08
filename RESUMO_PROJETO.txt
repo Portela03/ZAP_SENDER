@@ -1,0 +1,127 @@
+================================================================================
+  WHATSAPP SENDER - RESUMO DO PROJETO
+  Criado em: 2026-07-07
+================================================================================
+
+OBJETIVO:
+  Ferramenta para envio em massa de mensagens personalizadas via WhatsApp,
+  rodando em Windows (PC) ou Android (Termux no tablet).
+
+--------------------------------------------------------------------------------
+ESTRUTURA DO PROJETO:
+--------------------------------------------------------------------------------
+
+whatsapp_sender/
+├── main.py                 # Script principal Python
+├── config.json             # Configurações (template, delays, lote)
+├── requirements.txt        # Dependências Python (pandas, openpyxl)
+├── contacts_template.csv   # Modelo de planilha de contatos
+├── setup.ps1               # Setup automatizado para Windows
+├── setup.sh                # Setup automatizado para Android/Termux
+├── node/
+│   ├── package.json        # Dependências Node.js
+│   ├── sender.js           # Engine de envio via Baileys (WhatsApp Web)
+│   └── auth_info/          # Sessão salva (não precisa re-escanear QR)
+└── data/
+    └── contacts.db         # Banco SQLite com contatos e status
+
+--------------------------------------------------------------------------------
+COMANDOS DE USO:
+--------------------------------------------------------------------------------
+
+1. CARREGAR CONTATOS (de CSV/Excel):
+   python main.py --load minha_planilha.csv
+
+2. INICIAR ENVIO:
+   python main.py --send
+   (primeira vez: escanear QR no celular)
+
+3. VER STATUS:
+   python main.py --status
+
+4. REENVIAR FALHAS:
+   python main.py --retry
+
+--------------------------------------------------------------------------------
+CONFIGURAÇÃO (config.json):
+--------------------------------------------------------------------------------
+
+{
+  "message_template": "Olá {nome}, {mensagem}",
+  "batch_size": 50,
+  "delay_min_ms": 3000,
+  "delay_max_ms": 8000
+}
+
+- {nome}, {mensagem}, {empresa} = variáveis substituídas pelo CSV
+- batch_size = máximo de mensagens por execução
+- delays = intervalo aleatório entre envios (anti-detecção)
+
+--------------------------------------------------------------------------------
+FORMATO DO CSV:
+--------------------------------------------------------------------------------
+
+numero,nome,mensagem,empresa
++5511999990001,João Silva,Sua proposta está pronta,Empresa ABC
++5521988880002,Maria Souza,Confirme sua presença,Empresa XYZ
+
+- numero: formato internacional com +
+- nome/mensagem/empresa: campos para personalização
+
+--------------------------------------------------------------------------------
+PROBLEMAS RESOLVIDOS NA SESSÃO:
+--------------------------------------------------------------------------------
+
+1. Python não estava instalado → Instalado via winget (Python 3.13.14)
+2. Atalho falso da Microsoft Store → Detectado e corrigido no setup.ps1
+3. Sessão corrompida (QR não escaneado) → Apagar node/auth_info e recriar
+4. Código 515 (restart required) → Reconexão automática implementada
+5. Código 408 (timeout) → Reconexão automática implementada
+6. Erros "Bad MAC" → Ignorar (são mensagens recebidas, não afetam envio)
+
+--------------------------------------------------------------------------------
+TESTES REALIZADOS:
+--------------------------------------------------------------------------------
+
+✓ Carregamento de 3 contatos do template
+✓ Conexão via QR code
+✓ Reconexão automática após timeout
+✓ Envio bem-sucedido: 3/3 mensagens, 0 falhas
+✓ Sessão salva (não precisa re-escanear QR)
+
+--------------------------------------------------------------------------------
+PRÓXIMOS PASSOS PARA USO REAL:
+--------------------------------------------------------------------------------
+
+1. Editar config.json com seu template de mensagem
+2. Criar planilha real baseada em contacts_template.csv
+3. Rodar: python main.py --load sua_planilha.csv
+4. Rodar: python main.py --send
+5. Para continuar outro dia: só rodar --send (sessão já está salva)
+
+--------------------------------------------------------------------------------
+DEPENDÊNCIAS INSTALADAS:
+--------------------------------------------------------------------------------
+
+Python 3.13.14:
+  - pandas 3.0.3
+  - openpyxl 3.1.5
+  - numpy 2.5.1
+
+Node.js 24.12.0:
+  - @whiskeysockets/baileys 6.7.17
+  - pino 9.6.0
+  - qrcode-terminal 0.12.0
+
+--------------------------------------------------------------------------------
+ARQUIVOS ZIP PARA BACKUP/TRANSFERÊNCIA:
+--------------------------------------------------------------------------------
+
+Gerado em: C:\Users\joaop\Desktop\whatsapp_sender.zip
+
+Para transferir para outro PC ou tablet:
+1. Copiar o ZIP
+2. Extrair
+3. Rodar setup.ps1 (Windows) ou setup.sh (Termux)
+
+================================================================================

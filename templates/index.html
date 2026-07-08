@@ -50,14 +50,18 @@
     <span class="navbar-brand fw-bold fs-5">
       <i class="bi bi-chat-dots-fill me-2"></i>WhatsApp Sender
     </span>
-    <span class="badge rounded-pill text-bg-light text-dark" id="status-badge" style="display:none;"></span>
+    <div class="d-flex align-items-center gap-2">
+      <span class="badge rounded-pill text-bg-light text-dark" id="status-badge" style="display:none;"></span>
+      <span class="text-white-50 small d-none d-sm-inline">{{ username }}</span>
+      <a href="/logout" class="btn btn-outline-light btn-sm">Sair</a>
+    </div>
   </div>
 </nav>
 
 <div class="container-lg py-4">
 
   <!-- Status Cards -->
-  <div class="row g-3 mb-4">
+  <div class="row g-3 mb-2">
     <div class="col-4">
       <div class="card stat-card p-3 text-center">
         <div class="stat-number text-warning" id="cnt-pending">–</div>
@@ -76,6 +80,16 @@
         <div class="text-muted small mt-1">Falhas</div>
       </div>
     </div>
+  </div>
+  <!-- Limite diário -->
+  <div class="d-flex align-items-center justify-content-between mb-4 px-1">
+    <small class="text-muted">
+      <i class="bi bi-shield-check me-1 text-success"></i>
+      Hoje: <strong id="daily-sent">0</strong> / <strong id="daily-limit">150</strong> mensagens
+    </small>
+    <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#modalConfig">
+      <i class="bi bi-gear me-1"></i>Configurações
+    </button>
   </div>
 
   <!-- Progress bar (shown while sending) -->
@@ -198,6 +212,57 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<!-- Modal de Configurações -->
+<div class="modal fade" id="modalConfig" tabindex="-1" aria-labelledby="modalConfigLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modalConfigLabel"><i class="bi bi-gear me-2"></i>Configurações Anti-Bloqueio</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label fw-semibold">Limite diário de mensagens</label>
+            <input type="number" class="form-control" id="cfg-daily-limit" min="1" max="500">
+            <div class="form-text">Máximo recomendado: 150 para contas novas, até 300 para antigas.</div>
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Delay mín. (seg)</label>
+            <input type="number" class="form-control" id="cfg-delay-min" min="5" max="300">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Delay máx. (seg)</label>
+            <input type="number" class="form-control" id="cfg-delay-max" min="10" max="600">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Tamanho do lote</label>
+            <input type="number" class="form-control" id="cfg-batch-size" min="1" max="200">
+            <div class="form-text">Número de mensagens por sessão de envio.</div>
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Horário inicial permitido</label>
+            <input type="number" class="form-control" id="cfg-hours-start" min="0" max="23">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Horário final permitido</label>
+            <input type="number" class="form-control" id="cfg-hours-end" min="1" max="24">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Pausa entre lotes (min)</label>
+            <input type="number" class="form-control" id="cfg-batch-pause" min="0" max="1440">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-success" onclick="saveConfig()">Salvar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ─────────────────────────────────────────────
 // Log helpers
@@ -268,6 +333,9 @@ async function refreshStatus() {
     document.getElementById('cnt-pending').textContent = pending;
     document.getElementById('cnt-sent').textContent    = sent;
     document.getElementById('cnt-failed').textContent  = failed;
+
+    document.getElementById('daily-sent').textContent  = data.sent_today  ?? 0;
+    document.getElementById('daily-limit').textContent = data.daily_limit ?? 150;
 
     isSending = data.send_running;
     totalAll  = pending + sent + failed;
@@ -485,10 +553,21 @@ async function loadFile() {
   }
 }
 
-async function startSend() {
+async function startSend(force = false) {
   try {
-    const r    = await fetch('/api/send', { method: 'POST' });
+    const opts = { method: 'POST' };
+    if (force) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body    = JSON.stringify({ force: true });
+    }
+    const r    = await fetch('/api/send', opts);
     const data = await r.json();
+    if (data.warning_hours) {
+      if (confirm('⚠️ ' + data.message + '\n\nDeseja enviar mesmo assim?')) {
+        startSend(true);
+      }
+      return;
+    }
     if (data.error) {
       log('ERRO: ' + data.error, 'log-warn');
     } else {
@@ -551,6 +630,54 @@ async function connectWA() {
     log('Erro ao conectar: ' + e.message, 'log-fail');
   }
 }
+
+// ─────────────────────────────────────────────
+// Configurações
+// ─────────────────────────────────────────────
+async function loadConfig() {
+  try {
+    const r   = await fetch('/api/config');
+    const cfg = await r.json();
+    document.getElementById('cfg-daily-limit').value  = cfg.daily_limit          ?? 150;
+    document.getElementById('cfg-delay-min').value    = cfg.delay_min_seconds    ?? 20;
+    document.getElementById('cfg-delay-max').value    = cfg.delay_max_seconds    ?? 60;
+    document.getElementById('cfg-batch-size').value   = cfg.batch_size           ?? 30;
+    document.getElementById('cfg-hours-start').value  = cfg.allowed_hours_start  ?? 8;
+    document.getElementById('cfg-hours-end').value    = cfg.allowed_hours_end    ?? 20;
+    document.getElementById('cfg-batch-pause').value  = cfg.batch_pause_minutes  ?? 60;
+  } catch (e) { /* ignora */ }
+}
+
+async function saveConfig() {
+  const payload = {
+    daily_limit:         parseInt(document.getElementById('cfg-daily-limit').value),
+    delay_min_seconds:   parseInt(document.getElementById('cfg-delay-min').value),
+    delay_max_seconds:   parseInt(document.getElementById('cfg-delay-max').value),
+    batch_size:          parseInt(document.getElementById('cfg-batch-size').value),
+    allowed_hours_start: parseInt(document.getElementById('cfg-hours-start').value),
+    allowed_hours_end:   parseInt(document.getElementById('cfg-hours-end').value),
+    batch_pause_minutes: parseInt(document.getElementById('cfg-batch-pause').value),
+  };
+  try {
+    const r    = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (data.error) {
+      alert('Erro ao salvar: ' + data.error);
+    } else {
+      bootstrap.Modal.getInstance(document.getElementById('modalConfig')).hide();
+      showToast('✅ Configurações salvas!');
+      refreshStatus();
+    }
+  } catch (e) {
+    alert('Erro: ' + e.message);
+  }
+}
+
+document.getElementById('modalConfig').addEventListener('show.bs.modal', loadConfig);
 
 // ─────────────────────────────────────────────
 // Init

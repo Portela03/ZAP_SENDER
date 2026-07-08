@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WhatsApp Sender — Interface Web
+WhatsApp Sender — Interface Web (Multi-usuário)
 Local : http://127.0.0.1:5000
 Cloud : use a URL gerada pelo Render/Railway
 """
@@ -9,38 +9,81 @@ import json
 import os
 import queue
 import secrets
+import shutil
 import subprocess
 import threading
 import time
 import webbrowser
+from datetime import datetime
 
 from flask import (
     Flask, Response, jsonify, redirect, render_template,
     request, session, url_for,
 )
 
+import auth
 import csv_loader
 import tracker
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
-ACCESS_PASSWORD = os.environ.get('ACCESS_PASSWORD', '')
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR    = os.path.join(BASE_DIR, 'data')
 NODE_SCRIPT = os.path.join(BASE_DIR, 'node', 'sender.js')
 
+# ---------------------------------------------------------------------------
+# Caminhos por usuário
+# ---------------------------------------------------------------------------
 
-def _get_auth_dir() -> str:
-    """Caminho da pasta auth_info, respeitando DATA_DIR em cloud."""
-    data_dir = os.environ.get('DATA_DIR', '')
-    if data_dir:
-        return os.path.join(data_dir, 'auth_info')
-    return os.path.join(BASE_DIR, 'node', 'auth_info')
+def _get_user_data_dir(user_id: str) -> str:
+    d = os.path.join(DATA_DIR, user_id)
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
-def _session_exists() -> bool:
-    return os.path.exists(os.path.join(_get_auth_dir(), 'creds.json'))
+def _get_auth_dir(user_id: str) -> str:
+    return os.path.join(_get_user_data_dir(user_id), 'auth_info')
+
+
+def _get_db_path(user_id: str) -> str:
+    return os.path.join(_get_user_data_dir(user_id), 'contacts.db')
+
+
+def _get_config_path(user_id: str) -> str:
+    return os.path.join(_get_user_data_dir(user_id), 'config.json')
+
+
+def _get_user_config(user_id: str) -> dict:
+    config_path = _get_config_path(user_id)
+    if not os.path.exists(config_path):
+        root_config = os.path.join(BASE_DIR, 'config.json')
+        if os.path.exists(root_config):
+            shutil.copy(root_config, config_path)
+        else:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'message_template': 'Olá {nome}, {mensagem}',
+                    'batch_size': 30,
+                    'delay_min_seconds': 20,
+                    'delay_max_seconds': 60,
+                    'batch_pause_minutes': 60,
+                    'daily_limit': 150,
+                    'allowed_hours_start': 8,
+                    'allowed_hours_end': 20,
+                }, f)
+    cfg = {
+        'daily_limit': 150,
+        'allowed_hours_start': 8,
+        'allowed_hours_end': 20,
+    }
+    with open(config_path, 'r', encoding='utf-8') as f:
+        cfg.update(json.load(f))
+    return cfg
+
+
+def _session_exists(user_id: str) -> bool:
+    return os.path.exists(os.path.join(_get_auth_dir(user_id), 'creds.json'))
 
 
 def _qr_to_png_base64(qr_text: str) -> str:
@@ -56,61 +99,103 @@ def _qr_to_png_base64(qr_text: str) -> str:
     return f'data:image/png;base64,{encoded}'
 
 # ---------------------------------------------------------------------------
-# Estado global
+# Estado global por usuário
 # ---------------------------------------------------------------------------
 
-_state_lock = threading.Lock()
-state = {
-    'send_running': False,
-    'qr_data':      None,   # data:image/png;base64,...
-    'node_proc':    None,
-    'stop_event':   threading.Event(),
-}
-
-_sse_lock = threading.Lock()
-_sse_listeners: list = []   # list[queue.Queue]
+_states_meta_lock = threading.Lock()
+_user_states: dict = {}   # user_id -> state dict
 
 
-def _push_event(event_type: str, **kwargs):
-    """Envia evento SSE para todos os clientes conectados."""
+def _get_user_state(user_id: str) -> dict:
+    with _states_meta_lock:
+        if user_id not in _user_states:
+            _user_states[user_id] = {
+                'lock':         threading.Lock(),
+                'send_running': False,
+                'qr_data':      None,
+                'node_proc':    None,
+                'stop_event':   threading.Event(),
+            }
+        return _user_states[user_id]
+
+
+_sse_meta_lock = threading.Lock()
+_sse_listeners: dict = {}   # user_id -> list[queue.Queue]
+
+
+def _push_event(user_id: str, event_type: str, **kwargs):
+    """Envia evento SSE para todos os clientes do usuário conectados."""
     payload = json.dumps({'type': event_type, **kwargs})
-    with _sse_lock:
+    with _sse_meta_lock:
+        listeners = _sse_listeners.get(user_id, [])
         dead = []
-        for q in _sse_listeners:
+        for q in listeners:
             try:
                 q.put_nowait(payload)
             except queue.Full:
                 dead.append(q)
         for q in dead:
-            _sse_listeners.remove(q)
+            listeners.remove(q)
 
 
 # ---------------------------------------------------------------------------
-# Autenticação por senha (opcional — ativa quando ACCESS_PASSWORD está definida)
+# Autenticação por conta de usuário
 # ---------------------------------------------------------------------------
 
-_PUBLIC_ENDPOINTS = {'login', 'static'}
+_PUBLIC_ENDPOINTS = {'login', 'register', 'static'}
 
 
 @app.before_request
 def _check_auth():
-    if not ACCESS_PASSWORD:
-        return  # sem senha configurada → acesso livre (uso local)
     if request.endpoint in _PUBLIC_ENDPOINTS:
         return
-    if not session.get('authenticated'):
+    if not session.get('user_id'):
         return redirect(url_for('login'))
 
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    if session.get('user_id'):
+        return redirect(url_for('index'))
     error = None
     if request.method == 'POST':
-        if request.form.get('password') == ACCESS_PASSWORD:
-            session['authenticated'] = True
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        user = auth.verify_user(username, password)
+        if user:
+            session['user_id']  = user['id']
+            session['username'] = user['username']
+            _get_user_data_dir(user['id'])   # garante dir criado
             return redirect(url_for('index'))
-        error = 'Senha incorreta.'
+        error = 'Usuário ou senha incorretos.'
     return render_template('login.html', error=error)
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if session.get('user_id'):
+        return redirect(url_for('index'))
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        confirm  = request.form.get('confirm', '')
+        if not username or len(username) < 3:
+            error = 'Usuário deve ter ao menos 3 caracteres.'
+        elif len(password) < 6:
+            error = 'Senha deve ter ao menos 6 caracteres.'
+        elif password != confirm:
+            error = 'As senhas não coincidem.'
+        else:
+            user = auth.create_user(username, password)
+            if user is None:
+                error = 'Esse nome de usuário já existe.'
+            else:
+                session['user_id']  = user['id']
+                session['username'] = user['username']
+                _get_user_data_dir(user['id'])
+                return redirect(url_for('index'))
+    return render_template('register.html', error=error)
 
 
 @app.route('/logout')
@@ -125,38 +210,44 @@ def logout():
 
 @app.route('/')
 def index():
-    resp = render_template('index.html')
     from flask import make_response
-    r = make_response(resp)
+    r = make_response(render_template('index.html', username=session.get('username', '')))
     r.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
     return r
 
 
 @app.route('/api/status')
 def api_status():
-    tracker.init_db()
-    summary = tracker.get_summary()
-    with _state_lock:
-        running = state['send_running']
-        has_qr  = state['qr_data'] is not None
+    user_id = session['user_id']
+    db_path = _get_db_path(user_id)
+    tracker.init_db(db_path)
+    summary = tracker.get_summary(db_path)
+    cfg = _get_user_config(user_id)
+    ust = _get_user_state(user_id)
+    with ust['lock']:
+        running = ust['send_running']
+        has_qr  = ust['qr_data'] is not None
     return jsonify({
         'summary': summary,
         'send_running': running,
         'has_qr': has_qr,
-        'session_exists': _session_exists(),
+        'session_exists': _session_exists(user_id),
+        'sent_today': tracker.get_sent_today(db_path),
+        'daily_limit': int(cfg.get('daily_limit', 150)),
     })
 
 
 @app.route('/api/whatsapp/disconnect', methods=['POST'])
 def api_whatsapp_disconnect():
-    import shutil
-    with _state_lock:
-        if state['send_running']:
+    user_id = session['user_id']
+    ust = _get_user_state(user_id)
+    with ust['lock']:
+        if ust['send_running']:
             return jsonify({'error': 'Pare o envio antes de desconectar.'}), 400
-        proc = state['node_proc']
+        proc = ust['node_proc']
         if proc and proc.poll() is None:
             proc.terminate()
-    auth_dir = _get_auth_dir()
+    auth_dir = _get_auth_dir(user_id)
     try:
         if os.path.exists(auth_dir):
             shutil.rmtree(auth_dir)
@@ -167,23 +258,29 @@ def api_whatsapp_disconnect():
 
 @app.route('/api/whatsapp/connect', methods=['POST'])
 def api_whatsapp_connect():
-    with _state_lock:
-        if state['send_running']:
+    user_id = session['user_id']
+    ust = _get_user_state(user_id)
+    with ust['lock']:
+        if ust['send_running']:
             return jsonify({'error': 'Já em andamento.'}), 400
-    state['stop_event'].clear()
-    threading.Thread(target=_connect_worker, daemon=True).start()
+    ust['stop_event'].clear()
+    threading.Thread(target=_connect_worker, args=(user_id,), daemon=True).start()
     return jsonify({'ok': True})
 
 
-def _connect_worker():
+def _connect_worker(user_id: str):
     """Inicia o Node.js apenas para estabelecer sessão via QR (sem enviar mensagens)."""
-    with _state_lock:
-        state['send_running'] = True
-        state['qr_data']      = None
+    ust = _get_user_state(user_id)
+    with ust['lock']:
+        ust['send_running'] = True
+        ust['qr_data']      = None
     try:
         if not os.path.exists(NODE_SCRIPT):
-            _push_event('error', message='node/sender.js não encontrado.')
+            _push_event(user_id, 'error', message='node/sender.js não encontrado.')
             return
+
+        env = os.environ.copy()
+        env['DATA_DIR'] = _get_user_data_dir(user_id)
 
         proc = subprocess.Popen(
             ['node', NODE_SCRIPT],
@@ -193,9 +290,10 @@ def _connect_worker():
             text=True,
             bufsize=1,
             cwd=BASE_DIR,
+            env=env,
         )
-        with _state_lock:
-            state['node_proc'] = proc
+        with ust['lock']:
+            ust['node_proc'] = proc
 
         resp_queue: queue.Queue = queue.Queue()
 
@@ -207,41 +305,41 @@ def _connect_worker():
                 try:
                     msg = json.loads(line)
                     if msg.get('status') == 'qr':
-                        raw = msg.get('qr', '')
+                        qr_raw = msg.get('qr', '')
                         try:
-                            png = _qr_to_png_base64(raw)
+                            png = _qr_to_png_base64(qr_raw)
                         except Exception as e:
                             import sys
                             print(f'[app] _qr_to_png_base64 falhou: {e}', file=sys.stderr)
-                            png = raw  # fallback: envia string bruta, JS renderiza
-                        with _state_lock:
-                            state['qr_data'] = png
-                        _push_event('qr')
+                            png = qr_raw  # fallback: string bruta, JS renderiza
+                        with ust['lock']:
+                            ust['qr_data'] = png
+                        _push_event(user_id, 'qr')
                     elif msg.get('status') == 'ready':
-                        with _state_lock:
-                            state['qr_data'] = None
+                        with ust['lock']:
+                            ust['qr_data'] = None
                     resp_queue.put(msg)
                 except json.JSONDecodeError:
                     pass
 
         threading.Thread(target=_read, daemon=True).start()
-        _push_event('info', message='Aguardando conexão com WhatsApp… (escaneie o QR)')
+        _push_event(user_id, 'info', message='Aguardando conexão com WhatsApp… (escaneie o QR)')
 
         deadline = time.monotonic() + 300
         while time.monotonic() < deadline:
-            if state['stop_event'].is_set():
+            if ust['stop_event'].is_set():
                 proc.terminate()
-                _push_event('info', message='Conexão cancelada.')
+                _push_event(user_id, 'info', message='Conexão cancelada.')
                 return
             if proc.poll() is not None:
-                _push_event('error', message='Processo Node.js encerrou inesperadamente.')
+                _push_event(user_id, 'error', message='Processo Node.js encerrou inesperadamente.')
                 return
             try:
                 msg = resp_queue.get(timeout=2)
             except queue.Empty:
                 continue
             if msg.get('status') == 'ready':
-                _push_event('connected', message='WhatsApp conectado! Sessão salva com sucesso.')
+                _push_event(user_id, 'connected', message='WhatsApp conectado! Sessão salva com sucesso.')
                 break
 
         try:
@@ -252,19 +350,21 @@ def _connect_worker():
         proc.wait()
 
     except Exception as e:
-        _push_event('error', message=str(e))
+        _push_event(user_id, 'error', message=str(e))
     finally:
-        with _state_lock:
-            state['send_running'] = False
-            state['qr_data']      = None
-            state['node_proc']    = None
-        _push_event('done')
+        with ust['lock']:
+            ust['send_running'] = False
+            ust['qr_data']      = None
+            ust['node_proc']    = None
+        _push_event(user_id, 'done')
 
 
 @app.route('/api/qr')
 def api_qr():
-    with _state_lock:
-        qr = state['qr_data']
+    user_id = session['user_id']
+    ust = _get_user_state(user_id)
+    with ust['lock']:
+        qr = ust['qr_data']
     return jsonify({'qr': qr})
 
 
@@ -280,15 +380,17 @@ def api_load():
     if ext not in ('.csv', '.xlsx', '.xls'):
         return jsonify({'error': f'Formato não suportado: {ext}. Use .csv, .xlsx ou .xls'}), 400
 
-    temp_path = os.path.join(BASE_DIR, f'_upload_temp{ext}')
+    user_id   = session['user_id']
+    db_path   = _get_db_path(user_id)
+    temp_path = os.path.join(_get_user_data_dir(user_id), f'_upload_temp{ext}')
     f.save(temp_path)
 
     try:
-        tracker.init_db()
+        tracker.init_db(db_path)
         contacts = csv_loader.load_contacts(temp_path)
         if not contacts:
             return jsonify({'error': 'Nenhum contato válido encontrado na planilha.'}), 400
-        inserted, skipped = tracker.upsert_contacts(contacts)
+        inserted, skipped = tracker.upsert_contacts(contacts, db_path)
         return jsonify({'inserted': inserted, 'skipped': skipped})
     except Exception as e:
         return jsonify({'error': str(e)}), 400
@@ -297,27 +399,80 @@ def api_load():
             os.remove(temp_path)
 
 
+@app.route('/api/config', methods=['GET'])
+def api_config_get():
+    user_id = session['user_id']
+    cfg = _get_user_config(user_id)
+    return jsonify(cfg)
+
+
+@app.route('/api/config', methods=['POST'])
+def api_config_post():
+    user_id = session['user_id']
+    data = request.get_json(silent=True) or {}
+    config_path = _get_config_path(user_id)
+    cfg = _get_user_config(user_id)
+    editable = {
+        'batch_size', 'delay_min_seconds', 'delay_max_seconds',
+        'batch_pause_minutes', 'daily_limit',
+        'allowed_hours_start', 'allowed_hours_end',
+    }
+    for key in editable:
+        if key in data:
+            try:
+                cfg[key] = int(data[key])
+            except (ValueError, TypeError):
+                return jsonify({'error': f'Valor inválido para {key}'}), 400
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    return jsonify({'ok': True})
+
+
 @app.route('/api/send', methods=['POST'])
 def api_send():
-    with _state_lock:
-        if state['send_running']:
+    user_id = session['user_id']
+    ust = _get_user_state(user_id)
+    with ust['lock']:
+        if ust['send_running']:
             return jsonify({'error': 'Envio já em andamento'}), 400
 
-    tracker.init_db()
-    summary = tracker.get_summary()
+    cfg = _get_user_config(user_id)
+
+    # Verifica horário permitido (a menos que force=true)
+    force = False
+    body = request.get_json(silent=True) or {}
+    force = bool(body.get('force', False))
+    if not force:
+        hour  = datetime.now().hour
+        start = int(cfg.get('allowed_hours_start', 8))
+        end   = int(cfg.get('allowed_hours_end', 20))
+        if not (start <= hour < end):
+            return jsonify({
+                'warning_hours': True,
+                'message': (
+                    f'Fora do horário recomendado ({start}h–{end}h). '
+                    'Envios fora desse período aumentam o risco de bloqueio.'
+                ),
+            })
+
+    db_path = _get_db_path(user_id)
+    tracker.init_db(db_path)
+    summary = tracker.get_summary(db_path)
     if not summary.get('pending', 0):
         return jsonify({'error': 'Nenhuma mensagem pendente. Carregue um arquivo CSV primeiro.'}), 400
 
-    state['stop_event'].clear()
-    threading.Thread(target=_send_worker, daemon=True).start()
+    ust['stop_event'].clear()
+    threading.Thread(target=_send_worker, args=(user_id,), daemon=True).start()
     return jsonify({'ok': True})
 
 
 @app.route('/api/stop', methods=['POST'])
 def api_stop():
-    state['stop_event'].set()
-    with _state_lock:
-        proc = state['node_proc']
+    user_id = session['user_id']
+    ust = _get_user_state(user_id)
+    ust['stop_event'].set()
+    with ust['lock']:
+        proc = ust['node_proc']
     if proc and proc.poll() is None:
         proc.terminate()
     return jsonify({'ok': True})
@@ -325,20 +480,25 @@ def api_stop():
 
 @app.route('/api/retry', methods=['POST'])
 def api_retry():
-    tracker.init_db()
-    summary = tracker.get_summary()
+    user_id = session['user_id']
+    db_path = _get_db_path(user_id)
+    tracker.init_db(db_path)
+    summary = tracker.get_summary(db_path)
     failed = summary.get('failed', 0)
     if failed == 0:
         return jsonify({'error': 'Nenhuma mensagem com falha para retentar.'}), 400
-    tracker.reset_failed()
+    tracker.reset_failed(db_path)
     return jsonify({'reset': failed})
 
 
 @app.route('/api/progress')
 def api_progress():
+    user_id = session['user_id']
     q: queue.Queue = queue.Queue(maxsize=200)
-    with _sse_lock:
-        _sse_listeners.append(q)
+    with _sse_meta_lock:
+        if user_id not in _sse_listeners:
+            _sse_listeners[user_id] = []
+        _sse_listeners[user_id].append(q)
 
     def generate():
         try:
@@ -349,9 +509,10 @@ def api_progress():
                 except queue.Empty:
                     yield 'data: {"type":"ping"}\n\n'
         finally:
-            with _sse_lock:
-                if q in _sse_listeners:
-                    _sse_listeners.remove(q)
+            with _sse_meta_lock:
+                listeners = _sse_listeners.get(user_id, [])
+                if q in listeners:
+                    listeners.remove(q)
 
     return Response(
         generate(),
@@ -364,45 +525,64 @@ def api_progress():
 # Worker de envio (thread background)
 # ---------------------------------------------------------------------------
 
-def _send_worker():
-    with _state_lock:
-        state['send_running'] = True
-        state['qr_data']      = None
-
+def _send_worker(user_id: str):
+    ust = _get_user_state(user_id)
+    with ust['lock']:
+        ust['send_running'] = True
+        ust['qr_data']      = None
     try:
-        _run_send()
+        _run_send(user_id)
     except Exception as e:
-        _push_event('error', message=str(e))
+        _push_event(user_id, 'error', message=str(e))
     finally:
-        with _state_lock:
-            state['send_running'] = False
-            state['qr_data']      = None
-            state['node_proc']    = None
-        _push_event('done')
+        with ust['lock']:
+            ust['send_running'] = False
+            ust['qr_data']      = None
+            ust['node_proc']    = None
+        _push_event(user_id, 'done')
 
 
-def _run_send():
-    config_path = os.path.join(BASE_DIR, 'config.json')
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = json.load(f)
+def _run_send(user_id: str):
+    config  = _get_user_config(user_id)
+    db_path = _get_db_path(user_id)
 
-    batch_size          = int(config.get('batch_size', 50))
+    batch_size          = int(config.get('batch_size', 30))
     batch_pause_minutes = int(config.get('batch_pause_minutes', 60))
+    daily_limit         = int(config.get('daily_limit', 150))
 
-    pending = tracker.get_pending(batch_size)
-    if not pending:
-        _push_event('info', message='Nenhuma mensagem pendente.')
+    # Verifica limite diário
+    sent_today = tracker.get_sent_today(db_path)
+    remaining_today = daily_limit - sent_today
+    if remaining_today <= 0:
+        _push_event(user_id, 'error',
+                    message=f'⚠️ Limite diário de {daily_limit} mensagens atingido '
+                            f'({sent_today} enviadas hoje). Retome amanhã.')
         return
 
-    summary    = tracker.get_summary()
-    already    = summary.get('sent', 0)
-    total_all  = sum(summary.values())
+    pending = tracker.get_pending(batch_size, db_path)
+    if not pending:
+        _push_event(user_id, 'info', message='Nenhuma mensagem pendente.')
+        return
 
-    _push_event('info', message=f'Iniciando lote: {len(pending)} mensagem(s) | {already}/{total_all} já enviadas')
+    # Trunca o lote se ultrapassaria o limite diário
+    if len(pending) > remaining_today:
+        _push_event(user_id, 'info',
+                    message=f'Lote reduzido para {remaining_today} (limite diário: {daily_limit}, '
+                            f'enviadas hoje: {sent_today})')
+        pending = pending[:remaining_today]
+
+    summary   = tracker.get_summary(db_path)
+    already   = summary.get('sent', 0)
+    total_all = sum(summary.values())
+
+    _push_event(user_id, 'info', message=f'Iniciando lote: {len(pending)} mensagem(s) | {already}/{total_all} já enviadas | Hoje: {sent_today}/{daily_limit}')
 
     if not os.path.exists(NODE_SCRIPT):
-        _push_event('error', message='node/sender.js não encontrado. Execute o setup primeiro.')
+        _push_event(user_id, 'error', message='node/sender.js não encontrado. Execute o setup primeiro.')
         return
+
+    env = os.environ.copy()
+    env['DATA_DIR'] = _get_user_data_dir(user_id)
 
     proc = subprocess.Popen(
         ['node', NODE_SCRIPT],
@@ -412,10 +592,12 @@ def _run_send():
         text=True,
         bufsize=1,
         cwd=BASE_DIR,
+        env=env,
     )
 
-    with _state_lock:
-        state['node_proc'] = proc
+    ust = _get_user_state(user_id)
+    with ust['lock']:
+        ust['node_proc'] = proc
 
     resp_queue: queue.Queue = queue.Queue()
 
@@ -426,39 +608,38 @@ def _run_send():
                 continue
             try:
                 msg = json.loads(line)
-                # Captura QR e converte para PNG base64 (Python-side)
                 if msg.get('status') == 'qr':
-                    raw = msg.get('qr', '')
+                    qr_raw = msg.get('qr', '')
                     try:
-                        png = _qr_to_png_base64(raw)
+                        png = _qr_to_png_base64(qr_raw)
                     except Exception as e:
                         import sys
                         print(f'[app] _qr_to_png_base64 falhou: {e}', file=sys.stderr)
-                        png = raw  # fallback: JS renderiza
-                    with _state_lock:
-                        state['qr_data'] = png
-                    _push_event('qr')
+                        png = qr_raw  # fallback: JS renderiza
+                    with ust['lock']:
+                        ust['qr_data'] = png
+                    _push_event(user_id, 'qr')
                 elif msg.get('status') == 'ready':
-                    with _state_lock:
-                        state['qr_data'] = None
+                    with ust['lock']:
+                        ust['qr_data'] = None
                 resp_queue.put(msg)
             except json.JSONDecodeError:
                 pass
 
     threading.Thread(target=_read_stdout, daemon=True).start()
 
-    _push_event('info', message='Aguardando conexão com WhatsApp… (escaneie o QR se solicitado)')
+    _push_event(user_id, 'info', message='Aguardando conexão com WhatsApp… (escaneie o QR se solicitado)')
 
     deadline = time.monotonic() + 300   # 5 min para escanear QR
     ready = False
 
     while time.monotonic() < deadline:
-        if state['stop_event'].is_set():
+        if ust['stop_event'].is_set():
             proc.terminate()
-            _push_event('info', message='Envio cancelado pelo usuário.')
+            _push_event(user_id, 'info', message='Envio cancelado pelo usuário.')
             return
         if proc.poll() is not None:
-            _push_event('error', message='Processo Node.js encerrou inesperadamente.')
+            _push_event(user_id, 'error', message='Processo Node.js encerrou inesperadamente.')
             return
         try:
             msg = resp_queue.get(timeout=2)
@@ -466,23 +647,23 @@ def _run_send():
             continue
         if msg.get('status') == 'ready':
             ready = True
-            _push_event('connected', message='WhatsApp conectado! Iniciando envio…')
+            _push_event(user_id, 'connected', message='WhatsApp conectado! Iniciando envio…')
             break
 
     if not ready:
         proc.terminate()
-        _push_event('error', message='Timeout aguardando conexão com WhatsApp.')
+        _push_event(user_id, 'error', message='Timeout aguardando conexão com WhatsApp.')
         return
 
     sent_count   = 0
     failed_count = 0
 
     for contact in pending:
-        if state['stop_event'].is_set():
-            _push_event('info', message='Envio pausado pelo usuário.')
+        if ust['stop_event'].is_set():
+            _push_event(user_id, 'info', message='Envio pausado pelo usuário.')
             break
         if proc.poll() is not None:
-            _push_event('error', message='Conexão com WhatsApp perdida.')
+            _push_event(user_id, 'error', message='Conexão com WhatsApp perdida.')
             break
 
         global_idx = already + sent_count + failed_count + 1
@@ -497,7 +678,7 @@ def _run_send():
             proc.stdin.write(payload + '\n')
             proc.stdin.flush()
         except BrokenPipeError:
-            _push_event('error', message='Conexão com Node.js perdida.')
+            _push_event(user_id, 'error', message='Conexão com Node.js perdida.')
             break
 
         response    = None
@@ -512,22 +693,22 @@ def _run_send():
                 continue
 
         if response is None:
-            tracker.mark_failed(contact['id'], 'Timeout')
+            tracker.mark_failed(contact['id'], 'Timeout', db_path)
             failed_count += 1
-            _push_event('result', index=global_idx, total=total_all,
+            _push_event(user_id, 'result', index=global_idx, total=total_all,
                         nome=contact['nome'], numero=contact['numero'],
                         ok=False, detail='timeout')
         elif response.get('status') == 'sent':
-            tracker.mark_sent(contact['id'])
+            tracker.mark_sent(contact['id'], db_path)
             sent_count += 1
-            _push_event('result', index=global_idx, total=total_all,
+            _push_event(user_id, 'result', index=global_idx, total=total_all,
                         nome=contact['nome'], numero=contact['numero'],
                         ok=True)
         else:
             err = response.get('error', 'Erro desconhecido')
-            tracker.mark_failed(contact['id'], err)
+            tracker.mark_failed(contact['id'], err, db_path)
             failed_count += 1
-            _push_event('result', index=global_idx, total=total_all,
+            _push_event(user_id, 'result', index=global_idx, total=total_all,
                         nome=contact['nome'], numero=contact['numero'],
                         ok=False, detail=err)
 
@@ -537,11 +718,11 @@ def _run_send():
         pass
     proc.wait()
 
-    remaining = tracker.get_summary().get('pending', 0)
+    remaining = tracker.get_summary(db_path).get('pending', 0)
     msg = f'Lote concluído — Enviadas: {sent_count} | Falhas: {failed_count}'
     if remaining > 0:
         msg += f' | Pendentes restantes: {remaining} (aguarde {batch_pause_minutes} min e envie novamente)'
-    _push_event('batch_done', message=msg, sent=sent_count, failed=failed_count, remaining=remaining)
+    _push_event(user_id, 'batch_done', message=msg, sent=sent_count, failed=failed_count, remaining=remaining)
 
 
 # ---------------------------------------------------------------------------
@@ -549,7 +730,8 @@ def _run_send():
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    tracker.init_db()
+    auth.init_users_db()
+    os.makedirs(DATA_DIR, exist_ok=True)
     port = int(os.environ.get('PORT', 5000))
     is_cloud = bool(os.environ.get('RENDER') or os.environ.get('RAILWAY_ENVIRONMENT')
                     or os.environ.get('FLY_APP_NAME') or os.environ.get('CLOUD', ''))
@@ -557,13 +739,9 @@ if __name__ == '__main__':
         threading.Timer(1.2, lambda: webbrowser.open(f'http://127.0.0.1:{port}')).start()
     print()
     print('=' * 52)
-    print('  WhatsApp Sender — Interface Web')
+    print('  WhatsApp Sender — Interface Web (Multi-usuário)')
     if is_cloud:
         print(f'  Rodando em modo cloud na porta {port}')
-        if ACCESS_PASSWORD:
-            print('  Senha de acesso: configurada via ACCESS_PASSWORD')
-        else:
-            print('  AVISO: ACCESS_PASSWORD nao definida — acesso publico!')
     else:
         print(f'  Acesse: http://127.0.0.1:{port}')
     print('  Para encerrar: Ctrl+C')

@@ -60,6 +60,25 @@ function log(msg) {
   process.stderr.write(`[sender.js] ${msg}\n`);
 }
 
+/**
+ * Simula tempo de digitação proporcional ao tamanho da mensagem.
+ * Retorna ms entre 3s e 8s com pequeno jitter.
+ */
+function typingDelay(text) {
+  const base = Math.min(8000, Math.max(3000, text.length * 55));
+  const jitter = Math.floor(Math.random() * 1000) - 500;
+  return base + jitter;
+}
+
+/**
+ * Adiciona um caractere unicode invisível aleatório no final da mensagem.
+ * Torna o hash de cada mensagem único sem alterar o texto visível.
+ */
+const ZWS_CHARS = ['\u200B', '\u200C', '\u200D', '\uFEFF'];
+function addInvisibleVariation(text) {
+  return text + ZWS_CHARS[Math.floor(Math.random() * ZWS_CHARS.length)];
+}
+
 // ── Processamento de contatos via stdin ──────────────────────────────────────
 
 function startProcessing() {
@@ -93,8 +112,19 @@ function startProcessing() {
       }
 
       // Usa o JID canônico retornado (resolve o dígito 9 brasileiro automaticamente)
-      await currentSock.sendMessage(check.jid, { text: contact.mensagem });
+      const canonicalJid = check.jid;
+      const variedText   = addInvisibleVariation(contact.mensagem);
+
+      // Simula digitação humana antes de enviar
+      await currentSock.sendPresenceUpdate('composing', canonicalJid);
+      await sleep(typingDelay(contact.mensagem));
+      await currentSock.sendPresenceUpdate('paused', canonicalJid);
+
+      await currentSock.sendMessage(canonicalJid, { text: variedText });
       reply({ id: contact.id, status: 'sent' });
+
+      // Marca como offline após o envio
+      await currentSock.sendPresenceUpdate('unavailable');
       await sleep(randomDelay());
     } catch (err) {
       reply({ id: contact.id, status: 'failed', error: err.message ?? String(err) });
@@ -122,9 +152,10 @@ async function connect() {
     auth: state,
     printQRInTerminal: false,
     logger,
-    browser: ['WhatsApp Sender', 'Chrome', '110.0.0'],
+    browser: ['Chrome (Linux)', 'Chrome', '120.0.0.0'],
     syncFullHistory: false,
     markOnlineOnConnect: false,
+    generateHighQualityLinkPreview: false,
   });
 
   currentSock = sock;

@@ -111,14 +111,24 @@
 
       <!-- Upload -->
       <div class="card p-4 mb-3">
-        <h6 class="fw-semibold mb-3">
-          <i class="bi bi-file-earmark-spreadsheet text-success me-1"></i>Carregar Planilha
-        </h6>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h6 class="fw-semibold mb-0">
+            <i class="bi bi-file-earmark-spreadsheet text-success me-1"></i>Carregar Planilha
+          </h6>
+          <div class="d-flex gap-1">
+            <a href="/api/template" class="btn btn-outline-success btn-sm" title="Baixar modelo CSV">
+              <i class="bi bi-download me-1"></i>Modelo
+            </a>
+            <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#modalFormatHelp" title="Formato e prompt para IA">
+              <i class="bi bi-robot me-1"></i>Prompt IA
+            </button>
+          </div>
+        </div>
         <div class="drop-zone" id="drop-zone" onclick="document.getElementById('csv-input').click()"
              ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
           <i class="bi bi-cloud-upload fs-3 text-secondary"></i>
           <div class="text-muted small mt-1">Arraste o arquivo aqui ou <strong>clique para selecionar</strong></div>
-          <div class="text-muted" style="font-size:.72rem;">CSV, XLSX ou XLS</div>
+          <div class="text-muted" style="font-size:.72rem;">CSV, XLSX ou XLS &mdash; colunas: <code>nome, numero, mensagem</code></div>
           <input type="file" id="csv-input" accept=".csv,.xlsx,.xls" onchange="onFileSelect(this)">
           <div class="file-name" id="file-name-label"></div>
         </div>
@@ -212,6 +222,89 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<!-- Modal: Prompt para IA -->
+<div class="modal fade" id="modalFormatHelp" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-robot me-2"></i>Formato da Planilha &amp; Prompt para IA</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <!-- Formato -->
+        <h6 class="fw-semibold">Formato obrigatório</h6>
+        <p class="text-muted small mb-1">A planilha deve ter <strong>3 colunas</strong> com exatamente esses nomes na primeira linha:</p>
+        <table class="table table-sm table-bordered mb-3">
+          <thead class="table-light">
+            <tr><th>nome</th><th>numero</th><th>mensagem</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>João Silva</td><td>11999990001</td><td>seu pedido está pronto!</td></tr>
+            <tr><td>Maria Souza</td><td>+5521988880002</td><td>sua consulta foi confirmada.</td></tr>
+            <tr><td>Pedro Costa</td><td>(11) 97777-0003</td><td>parabéns pelo aniversário!</td></tr>
+          </tbody>
+        </table>
+
+        <!-- Formatos de número -->
+        <h6 class="fw-semibold">Formatos de número aceitos</h6>
+        <ul class="small text-muted mb-3">
+          <li><code>11999990001</code> — DDD + 9 dígitos (mais comum)</li>
+          <li><code>1133334444</code> — DDD + 8 dígitos (fixo)</li>
+          <li><code>5511999990001</code> — código do país sem <code>+</code></li>
+          <li><code>+5511999990001</code> — código do país com <code>+</code></li>
+          <li><code>(11) 99999-0001</code> — formato com parênteses e traço (normalizado automaticamente)</li>
+        </ul>
+
+        <!-- Erros comuns -->
+        <h6 class="fw-semibold">Erros comuns</h6>
+        <ul class="small text-muted mb-4">
+          <li><strong>Coluna ausente</strong>: a primeira linha da planilha precisa ter <code>nome</code>, <code>numero</code> e <code>mensagem</code> exatamente assim (minúsculas, sem acento).</li>
+          <li><strong>Número inválido</strong>: números com menos de 10 dígitos serão rejeitados. Remova pontos, traços e espaços extras — ou deixe o sistema normalizar.</li>
+          <li><strong>Template com variável inexistente</strong>: se o template de mensagem usa <code>{campo}</code> que não existe na planilha, a linha será ignorada. Verifique o template em Configurações.</li>
+          <li><strong>Arquivo Excel</strong>: se exportar do Excel, salve como <em>CSV UTF-8</em> ou envie o próprio <code>.xlsx</code>.</li>
+        </ul>
+
+        <!-- Prompt para IA -->
+        <h6 class="fw-semibold">Prompt para converter sua lista com IA</h6>
+        <p class="small text-muted">Cole o texto abaixo no ChatGPT, Claude ou Gemini junto com seus dados:</p>
+        <div class="position-relative">
+          <pre id="ai-prompt-text" class="bg-light rounded p-3" style="font-size:.78rem; white-space:pre-wrap; word-break:break-word; max-height:260px; overflow-y:auto;">Preciso que você converta minha lista de contatos para um arquivo CSV no formato exato abaixo.
+
+REGRAS:
+- 3 colunas obrigatórias: nome, numero, mensagem
+- Primeira linha é o cabeçalho: nome,numero,mensagem
+- Separador: vírgula
+- Números: remova espaços e caracteres especiais, mantém apenas dígitos (ou inicia com +)
+- Se o número não tiver DDD, adicione o DDD correto
+- Encoding: UTF-8
+- Não inclua aspas ao redor dos campos, a menos que a mensagem contenha vírgula
+
+EXEMPLO DO RESULTADO ESPERADO:
+nome,numero,mensagem
+João Silva,11999990001,seu pedido está pronto para retirada!
+Maria Souza,21988880002,sua consulta foi confirmada para amanhã.
+
+MEUS DADOS (convertidos para CSV):
+[COLE AQUI SUA PLANILHA / LISTA / TABELA]
+
+Retorne APENAS o CSV pronto, sem explicações.</pre>
+          <button class="btn btn-sm btn-success position-absolute top-0 end-0 m-2" onclick="copyPrompt()">
+            <i class="bi bi-clipboard me-1"></i>Copiar
+          </button>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <a href="/api/template" class="btn btn-outline-success">
+          <i class="bi bi-download me-1"></i>Baixar Modelo CSV
+        </a>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Modal de Configurações -->
 <div class="modal fade" id="modalConfig" tabindex="-1" aria-labelledby="modalConfigLabel" aria-hidden="true">
@@ -538,8 +631,17 @@ async function loadFile() {
     const data = await r.json();
     if (data.error) {
       log('ERRO ao carregar: ' + data.error, 'log-fail');
+      if (data.detail) log('  Detalhe: ' + data.detail, 'log-fail');
+      if (data.errors && data.errors.length) {
+        data.errors.forEach(e => log('  • ' + e, 'log-fail'));
+      }
+      log('Dica: clique em "🤖 Prompt IA" para ver o formato correto e converter seus dados.', 'log-warn');
     } else {
       log(`Planilha carregada — ${data.inserted} novo(s), ${data.skipped} já existente(s).`, 'log-ok');
+      if (data.warnings && data.warnings.length) {
+        log(`⚠ ${data.warnings.length} linha(s) ignoradas por erro:`, 'log-warn');
+        data.warnings.forEach(w => log('  • ' + w, 'log-warn'));
+      }
       showToast(`✅ ${data.inserted} novo(s) + ${data.skipped} resetado(s) para pendente!`);
       document.getElementById('file-name-label').textContent = '';
       input.value = '';
@@ -678,6 +780,22 @@ async function saveConfig() {
 }
 
 document.getElementById('modalConfig').addEventListener('show.bs.modal', loadConfig);
+
+function copyPrompt() {
+  const text = document.getElementById('ai-prompt-text').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    showToast('✅ Prompt copiado! Cole no ChatGPT, Claude ou Gemini.');
+  }).catch(() => {
+    // fallback para navegadores sem permissão de clipboard
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('✅ Prompt copiado!');
+  });
+}
 
 // ─────────────────────────────────────────────
 // Init

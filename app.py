@@ -18,7 +18,7 @@ from datetime import datetime
 
 from flask import (
     Flask, Response, jsonify, redirect, render_template,
-    request, session, url_for,
+    request, send_file, session, url_for,
 )
 
 import auth
@@ -368,6 +368,18 @@ def api_qr():
     return jsonify({'qr': qr})
 
 
+@app.route('/api/template')
+def api_template():
+    """Serve o arquivo contacts_template.csv para download."""
+    template_path = os.path.join(BASE_DIR, 'contacts_template.csv')
+    return send_file(
+        template_path,
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name='contacts_template.csv',
+    )
+
+
 @app.route('/api/load', methods=['POST'])
 def api_load():
     if 'file' not in request.files:
@@ -387,11 +399,21 @@ def api_load():
 
     try:
         tracker.init_db(db_path)
-        contacts = csv_loader.load_contacts(temp_path)
+        contacts, import_errors = csv_loader.load_contacts(temp_path)
         if not contacts:
-            return jsonify({'error': 'Nenhum contato válido encontrado na planilha.'}), 400
+            detail = import_errors[0] if import_errors else 'Verifique se o arquivo tem as colunas: nome, numero, mensagem.'
+            extra  = import_errors[1:] if len(import_errors) > 1 else []
+            return jsonify({
+                'error': 'Nenhum contato válido encontrado na planilha.',
+                'detail': detail,
+                'errors': extra,
+            }), 400
         inserted, skipped = tracker.upsert_contacts(contacts, db_path)
-        return jsonify({'inserted': inserted, 'skipped': skipped})
+        return jsonify({
+            'inserted': inserted,
+            'skipped': skipped,
+            'warnings': import_errors,
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 400
     finally:

@@ -56,7 +56,10 @@ def cmd_load(filepath: str):
     print(f"Carregando contatos de: {filepath}")
     tracker.init_db()
 
-    contacts = csv_loader.load_contacts(filepath)
+    contacts, import_errors = csv_loader.load_contacts(filepath)
+    if import_errors:
+        for err in import_errors:
+            print(f"  ⚠ {err}")
     if not contacts:
         print("[ERRO] Nenhum contato válido encontrado na planilha.")
         sys.exit(1)

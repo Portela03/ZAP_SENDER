@@ -13,7 +13,10 @@ def normalize_phone(raw: str) -> str:
     digits = re.sub(r'\D', '', str(raw).strip())
 
     if not digits:
-        raise ValueError(f"Número inválido (vazio): {raw!r}")
+        raise ValueError(
+            f"Número vazio ou sem dígitos: {raw!r}. "
+            "Exemplos válidos: 11999990001 | (11) 99999-0001 | +5511999990001"
+        )
 
     # Already has country code (12+ digits starting with 55)
     if digits.startswith('55') and len(digits) >= 12:
@@ -27,9 +30,15 @@ def normalize_phone(raw: str) -> str:
     if len(digits) >= 12:
         return '+' + digits
 
+    if len(digits) < 10:
+        raise ValueError(
+            f"Número muito curto: {raw!r} → {digits!r} ({len(digits)} dígitos). "
+            "Mínimo: 10 dígitos (DDD + número). Ex: 11999990001"
+        )
+
     raise ValueError(
-        f"Número inválido: {raw!r} → {digits!r} "
-        f"({len(digits)} dígitos). Use formato: 11999999999 ou +5511999999999"
+        f"Número inválido: {raw!r} → {digits!r} ({len(digits)} dígitos). "
+        "Formatos aceitos: 11999999999 | +5511999999999 | (11) 99999-9999"
     )
 
 
@@ -79,7 +88,11 @@ def _read_csv(filepath: str) -> pd.DataFrame:
     if ignored > 0:
         print(f"\n⚠ {ignored} linha(s) ignoradas (campos insuficientes).\n")
 
-    return pd.DataFrame(rows)
+
+FORMAT_HINT = (
+    "Formato esperado: nome,numero,mensagem\n"
+    "Exemplos de número válidos: 11999990001 | +5511999990001 | (11) 99999-0001 | 5511999990001"
+)
 
 
 def load_contacts(filepath: str) -> list:
@@ -98,8 +111,9 @@ def load_contacts(filepath: str) -> list:
     missing = required_cols - set(df.columns)
     if missing:
         raise ValueError(
-            f"Colunas obrigatórias ausentes na planilha: {', '.join(sorted(missing))}. "
-            f"Colunas encontradas: {', '.join(df.columns)}"
+            f"Coluna(s) obrigatória(s) ausente(s): {', '.join(sorted(missing))}. "
+            f"Colunas encontradas na planilha: {', '.join(df.columns)}. "
+            "Certifique-se que a primeira linha da planilha é o cabeçalho: nome,numero,mensagem"
         )
 
     df = df.fillna('')
@@ -118,7 +132,7 @@ def load_contacts(filepath: str) -> list:
         try:
             row_dict['numero'] = normalize_phone(row_dict['numero'])
         except ValueError as e:
-            errors.append(f"Linha {line_num}: {e}")
+            errors.append(f"Linha {line_num} (número inválido): {e}")
             continue
 
         # Apply message template
@@ -126,9 +140,14 @@ def load_contacts(filepath: str) -> list:
             message = template.format_map(row_dict)
         except KeyError as e:
             errors.append(
-                f"Linha {line_num}: variável {e} usada no template não existe na planilha. "
-                f"Colunas disponíveis: {', '.join(df.columns)}"
+                f"Linha {line_num}: a variável {e} usada no template não existe na planilha. "
+                f"Colunas disponíveis: {', '.join(df.columns)}. "
+                "Edite o template em Configurações ou adicione a coluna à planilha."
             )
+            continue
+
+        if not row_dict.get('nome', '').strip():
+            errors.append(f"Linha {line_num}: campo 'nome' está vazio.")
             continue
 
         contacts.append({
@@ -143,4 +162,4 @@ def load_contacts(filepath: str) -> list:
             print(f"  • {err}")
         print()
 
-    return contacts
+    return contacts, errors

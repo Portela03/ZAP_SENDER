@@ -40,6 +40,42 @@
     .file-name { font-size: .82rem; color: #555; margin-top: 6px; word-break: break-all; }
     .progress-bar-wa { background: #25d366; }
     #progress-bar-wrap { display: none; }
+    .config-modal .modal-content { border: none; border-radius: 14px; overflow: hidden; }
+    .config-modal .modal-header { background: #f8fafc; }
+    .config-modal .modal-body { background: #f3f6f8; }
+    .config-estimate {
+      background: #0f766e; color: #fff; border-radius: 12px;
+      padding: 16px; box-shadow: 0 8px 24px rgba(15,118,110,.18);
+    }
+    .config-estimate small { color: rgba(255,255,255,.75); }
+    .config-estimate-value { font-size: 1.45rem; line-height: 1.1; font-weight: 700; }
+    .config-estimate-grid {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;
+      margin-top: 14px;
+    }
+    .config-estimate-item {
+      background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.16);
+      border-radius: 10px; padding: 10px;
+    }
+    .config-section {
+      background: #fff; border: 1px solid #e4e8ee; border-radius: 12px;
+      padding: 14px;
+    }
+    .config-section-title {
+      display: flex; align-items: center; gap: 8px;
+      font-size: .85rem; font-weight: 700; color: #2b3035;
+      margin-bottom: 12px;
+    }
+    .config-section-title i { color: #0f766e; }
+    .config-field label {
+      font-size: .82rem; font-weight: 700; color: #30353b; margin-bottom: 6px;
+    }
+    .config-field .form-text { font-size: .75rem; margin-top: 5px; }
+    .config-field .input-group-text { min-width: 54px; justify-content: center; }
+    .config-warning {
+      display: none; background: #fff8e6; border: 1px solid #f1d38b;
+      color: #7a4b00; border-radius: 10px; padding: 10px 12px; font-size: .82rem;
+    }
     .preview-modal .modal-body { min-height: 0; }
     .preview-toolbar { background: #f8fafc; }
     .preview-table-wrap { min-height: 0; overflow: auto; }
@@ -69,6 +105,13 @@
       }
       .preview-row-index { width: auto; }
       .preview-number { white-space: normal; word-break: break-word; }
+      .config-modal .modal-dialog { margin: .5rem; }
+      .config-modal .modal-body { padding-bottom: 1rem; }
+      .config-estimate { padding: 14px; }
+      .config-estimate-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+      .config-estimate-item { padding: 8px; }
+      .config-estimate-item .fw-bold { font-size: .84rem; line-height: 1.2; }
+      .config-estimate-value { font-size: 1.25rem; }
     }
   </style>
 </head>
@@ -386,48 +429,130 @@ Retorne APENAS o CSV pronto, sem explicações.</pre>
 </div>
 
 <!-- Modal de Configurações -->
-<div class="modal fade" id="modalConfig" tabindex="-1" aria-labelledby="modalConfigLabel" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
+<div class="modal fade config-modal" id="modalConfig" tabindex="-1" aria-labelledby="modalConfigLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="modalConfigLabel"><i class="bi bi-gear me-2"></i>Configurações Anti-Bloqueio</h5>
+        <div>
+          <h5 class="modal-title" id="modalConfigLabel"><i class="bi bi-gear me-2"></i>Configurações Anti-Bloqueio</h5>
+          <div class="text-muted small mt-1">A previsão usa a fila pendente, pausas, limite diário e horário permitido.</div>
+        </div>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
         <div class="row g-3">
           <div class="col-12">
-            <label class="form-label fw-semibold">Limite diário de mensagens</label>
-            <input type="number" class="form-control" id="cfg-daily-limit" min="1" max="500">
-            <div class="form-text">Máximo recomendado: 150 para contas novas, até 300 para antigas.</div>
+            <div class="config-estimate">
+              <div class="d-flex flex-wrap justify-content-between gap-2 align-items-start">
+                <div>
+                  <small>Previsão da fila</small>
+                  <div class="config-estimate-value" id="cfg-estimate-duration">Sem pendentes</div>
+                </div>
+                <div class="text-lg-end">
+                  <small>Término estimado</small>
+                  <div class="config-estimate-value" id="cfg-estimate-end">-</div>
+                </div>
+              </div>
+              <div class="config-estimate-grid">
+                <div class="config-estimate-item">
+                  <small>Fila</small>
+                  <div class="fw-bold" id="cfg-estimate-count">0 mensagens</div>
+                </div>
+                <div class="config-estimate-item">
+                  <small>Lotes</small>
+                  <div class="fw-bold" id="cfg-estimate-batches">-</div>
+                </div>
+                <div class="config-estimate-item">
+                  <small>Ritmo médio</small>
+                  <div class="fw-bold" id="cfg-estimate-pace">-</div>
+                </div>
+              </div>
+              <div class="small mt-3" id="cfg-estimate-detail"></div>
+            </div>
           </div>
-          <div class="col-6">
-            <label class="form-label fw-semibold">Delay mín. (seg)</label>
-            <input type="number" class="form-control" id="cfg-delay-min" min="5" max="300">
-          </div>
-          <div class="col-6">
-            <label class="form-label fw-semibold">Delay máx. (seg)</label>
-            <input type="number" class="form-control" id="cfg-delay-max" min="10" max="600">
-          </div>
+
           <div class="col-12">
-            <label class="form-label fw-semibold">Tamanho do lote</label>
-            <input type="number" class="form-control" id="cfg-batch-size" min="1" max="200">
-            <div class="form-text">Número de mensagens por sessão de envio.</div>
+            <div class="config-warning" id="cfg-estimate-warning"></div>
           </div>
-          <div class="col-6">
-            <label class="form-label fw-semibold">Horário inicial permitido</label>
-            <input type="number" class="form-control" id="cfg-hours-start" min="0" max="23">
+
+          <div class="col-md-6 col-lg-4">
+            <div class="config-section h-100">
+              <div class="config-section-title"><i class="bi bi-calendar-check"></i>Limites</div>
+              <div class="config-field">
+                <label for="cfg-daily-limit">Limite diário de mensagens</label>
+                <div class="input-group">
+                  <input type="number" class="form-control" id="cfg-daily-limit" min="1" max="500" inputmode="numeric">
+                  <span class="input-group-text">msg</span>
+                </div>
+                <div class="form-text">Recomendado: 150 para contas novas, até 300 para antigas.</div>
+              </div>
+              <div class="config-field mt-3">
+                <label for="cfg-batch-size">Tamanho do lote</label>
+                <div class="input-group">
+                  <input type="number" class="form-control" id="cfg-batch-size" min="1" max="300" inputmode="numeric">
+                  <span class="input-group-text">msg</span>
+                </div>
+                <div class="form-text">Quantidade enviada antes de pausar.</div>
+              </div>
+            </div>
           </div>
-          <div class="col-6">
-            <label class="form-label fw-semibold">Horário final permitido</label>
-            <input type="number" class="form-control" id="cfg-hours-end" min="1" max="24">
+
+          <div class="col-md-6 col-lg-4">
+            <div class="config-section h-100">
+              <div class="config-section-title"><i class="bi bi-clock-history"></i>Ritmo</div>
+              <div class="row g-2">
+                <div class="col-6 config-field">
+                  <label for="cfg-delay-min">Delay mínimo</label>
+                  <div class="input-group">
+                    <input type="number" class="form-control" id="cfg-delay-min" min="5" max="300" inputmode="numeric">
+                    <span class="input-group-text">seg</span>
+                  </div>
+                </div>
+                <div class="col-6 config-field">
+                  <label for="cfg-delay-max">Delay máximo</label>
+                  <div class="input-group">
+                    <input type="number" class="form-control" id="cfg-delay-max" min="10" max="600" inputmode="numeric">
+                    <span class="input-group-text">seg</span>
+                  </div>
+                </div>
+              </div>
+              <div class="config-field mt-3">
+                <label for="cfg-batch-pause">Pausa entre lotes</label>
+                <div class="input-group">
+                  <input type="number" class="form-control" id="cfg-batch-pause" min="0" max="1440" inputmode="numeric">
+                  <span class="input-group-text">min</span>
+                </div>
+                <div class="form-text">Usada na estimativa total da fila.</div>
+              </div>
+            </div>
           </div>
-          <div class="col-12">
-            <label class="form-label fw-semibold">Pausa entre lotes (min)</label>
-            <input type="number" class="form-control" id="cfg-batch-pause" min="0" max="1440">
+
+          <div class="col-12 col-lg-4">
+            <div class="config-section h-100">
+              <div class="config-section-title"><i class="bi bi-sun"></i>Janela de envio</div>
+              <div class="row g-2">
+                <div class="col-6 config-field">
+                  <label for="cfg-hours-start">Início permitido</label>
+                  <div class="input-group">
+                    <input type="number" class="form-control" id="cfg-hours-start" min="0" max="23" inputmode="numeric">
+                    <span class="input-group-text">h</span>
+                  </div>
+                </div>
+                <div class="col-6 config-field">
+                  <label for="cfg-hours-end">Fim permitido</label>
+                  <div class="input-group">
+                    <input type="number" class="form-control" id="cfg-hours-end" min="1" max="24" inputmode="numeric">
+                    <span class="input-group-text">h</span>
+                  </div>
+                </div>
+              </div>
+              <div class="form-text">Exemplo: 8 até 20 permite envios das 08:00 às 19:59.</div>
+            </div>
           </div>
         </div>
       </div>
       <div class="modal-footer">
+        <div class="text-danger small me-auto" id="cfg-error" style="display:none;"></div>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-success" onclick="saveConfig()">Salvar</button>
       </div>
@@ -554,12 +679,16 @@ function onFileSelect(input) {
 let isSending = false;
 let totalSent = 0;
 let totalAll  = 0;
+let lastStatusData = null;
+let lastSummaryData = {};
 
 async function refreshStatus() {
   try {
     const r    = await fetch('/api/status');
     const data = await r.json();
     const s    = data.summary || {};
+    lastStatusData = data;
+    lastSummaryData = s;
 
     const pending = s.pending ?? 0;
     const sent    = s.sent    ?? 0;
@@ -608,6 +737,9 @@ async function refreshStatus() {
     // QR section — apenas mostra/esconde; o fetchQR é disparado pelo SSE
     if (!isSending && !data.has_qr) showQrSection(false);
     if (data.has_qr) showQrSection(true);
+    if (document.getElementById('modalConfig')?.classList.contains('show')) {
+      updateConfigEstimate();
+    }
 
   } catch (e) { /* servidor pode estar iniciando */ }
 }
@@ -966,6 +1098,11 @@ async function connectWA() {
 // ─────────────────────────────────────────────
 // Configurações
 // ─────────────────────────────────────────────
+const configInputIds = [
+  'cfg-daily-limit', 'cfg-delay-min', 'cfg-delay-max', 'cfg-batch-size',
+  'cfg-hours-start', 'cfg-hours-end', 'cfg-batch-pause',
+];
+
 async function loadConfig() {
   try {
     const r   = await fetch('/api/config');
@@ -977,19 +1114,234 @@ async function loadConfig() {
     document.getElementById('cfg-hours-start').value  = cfg.allowed_hours_start  ?? 8;
     document.getElementById('cfg-hours-end').value    = cfg.allowed_hours_end    ?? 20;
     document.getElementById('cfg-batch-pause').value  = cfg.batch_pause_minutes  ?? 60;
+    setConfigError('');
+    updateConfigEstimate();
   } catch (e) { /* ignora */ }
+}
+
+function setConfigError(msg = '') {
+  const el = document.getElementById('cfg-error');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = msg ? '' : 'none';
+}
+
+function readConfigNumber(id, fallback = 0) {
+  const value = parseInt(document.getElementById(id).value, 10);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function readConfigValues() {
+  return {
+    dailyLimit: readConfigNumber('cfg-daily-limit', 150),
+    delayMin: readConfigNumber('cfg-delay-min', 20),
+    delayMax: readConfigNumber('cfg-delay-max', 60),
+    batchSize: readConfigNumber('cfg-batch-size', 30),
+    hoursStart: readConfigNumber('cfg-hours-start', 8),
+    hoursEnd: readConfigNumber('cfg-hours-end', 20),
+    batchPause: readConfigNumber('cfg-batch-pause', 60),
+  };
+}
+
+function validateConfigValues(cfg) {
+  if (cfg.dailyLimit < 1 || cfg.dailyLimit > 500) return 'Limite diário precisa ficar entre 1 e 500.';
+  if (cfg.batchSize < 1 || cfg.batchSize > 300) return 'Tamanho do lote precisa ficar entre 1 e 300.';
+  if (cfg.delayMin < 5 || cfg.delayMin > 300) return 'Delay mínimo precisa ficar entre 5 e 300 segundos.';
+  if (cfg.delayMax < 10 || cfg.delayMax > 600) return 'Delay máximo precisa ficar entre 10 e 600 segundos.';
+  if (cfg.delayMax < cfg.delayMin) return 'Delay máximo precisa ser maior ou igual ao delay mínimo.';
+  if (cfg.batchPause < 0 || cfg.batchPause > 1440) return 'Pausa entre lotes precisa ficar entre 0 e 1440 minutos.';
+  if (cfg.hoursStart < 0 || cfg.hoursStart > 23) return 'Horário inicial precisa ficar entre 0 e 23.';
+  if (cfg.hoursEnd < 1 || cfg.hoursEnd > 24) return 'Horário final precisa ficar entre 1 e 24.';
+  if (cfg.hoursEnd <= cfg.hoursStart) return 'Horário final precisa ser maior que o horário inicial.';
+  return '';
+}
+
+function fmtLongDuration(secs) {
+  if (secs < 60) return `${Math.max(1, Math.round(secs))}s`;
+  const days = Math.floor(secs / 86400);
+  const hours = Math.floor((secs % 86400) / 3600);
+  const mins = Math.round((secs % 3600) / 60);
+  const parts = [];
+  if (days) parts.push(`${days}d`);
+  if (hours) parts.push(`${hours}h`);
+  if (mins || !parts.length) parts.push(`${mins}min`);
+  return parts.join(' ');
+}
+
+function atHour(base, hour) {
+  const d = new Date(base);
+  d.setHours(hour, 0, 0, 0);
+  return d;
+}
+
+function nextDayAtStart(base, startHour) {
+  const d = atHour(base, startHour);
+  d.setDate(d.getDate() + 1);
+  return d;
+}
+
+function sameLocalDate(a, b) {
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
+}
+
+function nextAllowedStart(date, startHour, endHour) {
+  const cursor = new Date(date);
+  const start = atHour(cursor, startHour);
+  const end = atHour(cursor, endHour);
+  if (cursor < start) return start;
+  if (cursor >= end) return nextDayAtStart(cursor, startHour);
+  return cursor;
+}
+
+function addSecondsRespectingWindow(date, secs, startHour, endHour) {
+  let cursor = nextAllowedStart(date, startHour, endHour);
+  let remaining = secs;
+  while (remaining > 0) {
+    cursor = nextAllowedStart(cursor, startHour, endHour);
+    const end = atHour(cursor, endHour);
+    const available = Math.max(0, (end - cursor) / 1000);
+    if (available <= 0) {
+      cursor = nextDayAtStart(cursor, startHour);
+    } else if (remaining <= available) {
+      return new Date(cursor.getTime() + remaining * 1000);
+    } else {
+      remaining -= available;
+      cursor = nextDayAtStart(cursor, startHour);
+    }
+  }
+  return cursor;
+}
+
+function simulateConfigEstimate(cfg, pending, sentToday) {
+  const now = new Date();
+  const avgPerMsg = ((cfg.delayMin + cfg.delayMax) / 2) + 3;
+  const pauseSecs = cfg.batchPause * 60;
+  let cursor = nextAllowedStart(now, cfg.hoursStart, cfg.hoursEnd);
+  let dailySent = sameLocalDate(cursor, now) ? sentToday : 0;
+  let dayMarker = new Date(cursor);
+  let batches = pending > 0 ? 1 : 0;
+  let dayLimitSkips = 0;
+
+  for (let i = 0; i < pending; i++) {
+    cursor = nextAllowedStart(cursor, cfg.hoursStart, cfg.hoursEnd);
+    if (!sameLocalDate(cursor, dayMarker)) {
+      dailySent = 0;
+      dayMarker = new Date(cursor);
+    }
+    if (dailySent >= cfg.dailyLimit) {
+      cursor = nextDayAtStart(cursor, cfg.hoursStart);
+      dailySent = 0;
+      dayMarker = new Date(cursor);
+      dayLimitSkips += 1;
+    }
+
+    cursor = addSecondsRespectingWindow(cursor, avgPerMsg, cfg.hoursStart, cfg.hoursEnd);
+    dailySent += 1;
+
+    if (i < pending - 1 && (i + 1) % cfg.batchSize === 0) {
+      cursor = addSecondsRespectingWindow(cursor, pauseSecs, cfg.hoursStart, cfg.hoursEnd);
+      batches += 1;
+    }
+  }
+
+  return {
+    finish: cursor,
+    totalSecs: Math.max(0, (cursor - now) / 1000),
+    batches,
+    avgPerMsg,
+    startsAt: nextAllowedStart(now, cfg.hoursStart, cfg.hoursEnd),
+    dayLimitSkips,
+  };
+}
+
+function updateConfigEstimate() {
+  const cfg = readConfigValues();
+  const pending = Number(lastSummaryData?.pending ?? 0);
+  const sentToday = Number(lastStatusData?.sent_today ?? document.getElementById('daily-sent').textContent ?? 0);
+  const warningEl = document.getElementById('cfg-estimate-warning');
+  const warningMessages = [];
+
+  const validation = validateConfigValues(cfg);
+  if (validation) {
+    document.getElementById('cfg-estimate-duration').textContent = 'Ajuste os campos';
+    document.getElementById('cfg-estimate-end').textContent = '-';
+    document.getElementById('cfg-estimate-count').textContent = `${pending} pendente(s)`;
+    document.getElementById('cfg-estimate-batches').textContent = '-';
+    document.getElementById('cfg-estimate-pace').textContent = '-';
+    document.getElementById('cfg-estimate-detail').textContent = validation;
+    warningEl.textContent = validation;
+    warningEl.style.display = '';
+    return;
+  }
+
+  if (!pending) {
+    document.getElementById('cfg-estimate-duration').textContent = 'Sem pendentes';
+    document.getElementById('cfg-estimate-end').textContent = '-';
+    document.getElementById('cfg-estimate-count').textContent = '0 mensagens';
+    document.getElementById('cfg-estimate-batches').textContent = '-';
+    document.getElementById('cfg-estimate-pace').textContent = `~${Math.round(((cfg.delayMin + cfg.delayMax) / 2) + 3)}s/msg`;
+    document.getElementById('cfg-estimate-detail').textContent = 'Carregue uma planilha para calcular a fila.';
+    warningEl.style.display = 'none';
+    return;
+  }
+
+  const estimate = simulateConfigEstimate(cfg, pending, sentToday);
+  const remainingToday = Math.max(0, cfg.dailyLimit - sentToday);
+  const now = new Date();
+  const startsLater = estimate.startsAt.getTime() - now.getTime() > 60000;
+
+  if (startsLater) {
+    warningMessages.push(`Começa no próximo horário permitido: ${fmtDatetime(estimate.startsAt)}.`);
+  }
+  if (remainingToday <= 0) {
+    warningMessages.push('O limite diário de hoje já foi atingido; a fila fica para o próximo dia permitido.');
+  } else if (pending > remainingToday) {
+    warningMessages.push(`Hoje cabem ${remainingToday} de ${pending} mensagem(ns) pelo limite diário.`);
+  }
+  if (cfg.batchSize > cfg.dailyLimit) {
+    warningMessages.push('O lote está maior que o limite diário e será limitado na prática.');
+  }
+
+  document.getElementById('cfg-estimate-duration').textContent = `~${fmtLongDuration(estimate.totalSecs)}`;
+  document.getElementById('cfg-estimate-end').textContent = fmtDatetime(estimate.finish);
+  document.getElementById('cfg-estimate-count').textContent = `${pending} pendente(s)`;
+  document.getElementById('cfg-estimate-batches').textContent = `${estimate.batches} lote(s)`;
+  document.getElementById('cfg-estimate-pace').textContent = `~${Math.round(estimate.avgPerMsg)}s/msg`;
+  document.getElementById('cfg-estimate-detail').textContent =
+    `Delay médio ${(cfg.delayMin + cfg.delayMax) / 2}s, pausa de ${cfg.batchPause}min entre lotes, janela ${cfg.hoursStart}h-${cfg.hoursEnd}h.`;
+
+  warningEl.textContent = warningMessages.join(' ');
+  warningEl.style.display = warningMessages.length ? '' : 'none';
 }
 
 async function saveConfig() {
   const payload = {
-    daily_limit:         parseInt(document.getElementById('cfg-daily-limit').value),
-    delay_min_seconds:   parseInt(document.getElementById('cfg-delay-min').value),
-    delay_max_seconds:   parseInt(document.getElementById('cfg-delay-max').value),
-    batch_size:          parseInt(document.getElementById('cfg-batch-size').value),
-    allowed_hours_start: parseInt(document.getElementById('cfg-hours-start').value),
-    allowed_hours_end:   parseInt(document.getElementById('cfg-hours-end').value),
-    batch_pause_minutes: parseInt(document.getElementById('cfg-batch-pause').value),
+    daily_limit:         readConfigNumber('cfg-daily-limit'),
+    delay_min_seconds:   readConfigNumber('cfg-delay-min'),
+    delay_max_seconds:   readConfigNumber('cfg-delay-max'),
+    batch_size:          readConfigNumber('cfg-batch-size'),
+    allowed_hours_start: readConfigNumber('cfg-hours-start'),
+    allowed_hours_end:   readConfigNumber('cfg-hours-end'),
+    batch_pause_minutes: readConfigNumber('cfg-batch-pause'),
   };
+  const validation = validateConfigValues({
+    dailyLimit: payload.daily_limit,
+    delayMin: payload.delay_min_seconds,
+    delayMax: payload.delay_max_seconds,
+    batchSize: payload.batch_size,
+    hoursStart: payload.allowed_hours_start,
+    hoursEnd: payload.allowed_hours_end,
+    batchPause: payload.batch_pause_minutes,
+  });
+  if (validation) {
+    setConfigError(validation);
+    updateConfigEstimate();
+    return;
+  }
+  setConfigError('');
+
   try {
     const r    = await fetch('/api/config', {
       method: 'POST',
@@ -1009,6 +1361,9 @@ async function saveConfig() {
   }
 }
 
+configInputIds.forEach((id) => {
+  document.getElementById(id).addEventListener('input', updateConfigEstimate);
+});
 document.getElementById('modalConfig').addEventListener('show.bs.modal', loadConfig);
 
 function copyPrompt() {

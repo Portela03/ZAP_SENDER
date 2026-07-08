@@ -1,3 +1,4 @@
+import csv
 import re
 import json
 import pandas as pd
@@ -47,46 +48,74 @@ def _read_csv(filepath: str) -> pd.DataFrame:
     Read a CSV file handling messages that contain unquoted commas by
     treating everything after the 2nd comma as the message field.
     """
-    rows = []
-    try:
-        with open(filepath, 'r', encoding='utf-8', errors='replace') as fh:
-            lines = [ln.rstrip('\n\r') for ln in fh if ln.strip()]
-    except Exception:
+    text = None
+    for encoding in ('utf-8-sig', 'utf-8', 'latin-1'):
+        try:
+            with open(filepath, 'r', encoding=encoding, errors='strict') as fh:
+                text = fh.read()
+            break
+        except UnicodeDecodeError:
+            continue
+
+    if text is None:
         return pd.read_csv(filepath, dtype=str)
 
+    lines = [ln for ln in text.splitlines() if ln.strip()]
     if not lines:
         return pd.DataFrame()
 
-    # Detect header
-    header = [h.strip().lower() for h in lines[0].split(',')]
-    # Determine column positions by name or positional fallback
     try:
-        i_nome = header.index('nome')
-        i_num  = header.index('numero')
-        i_msg  = header.index('mensagem')
-    except ValueError:
-        i_nome, i_num, i_msg = 0, 1, 2
+        dialect = csv.Sniffer().sniff('\n'.join(lines[:20]), delimiters=',;\t')
+        delimiter = dialect.delimiter
+    except csv.Error:
+        delimiter = ';' if lines[0].count(';') > lines[0].count(',') else ','
 
+    try:
+        parsed_rows = list(csv.reader(lines, delimiter=delimiter))
+    except csv.Error:
+        return pd.read_csv(filepath, dtype=str)
+
+    if not parsed_rows:
+        return pd.DataFrame()
+
+    header = []
+    for idx, col in enumerate(parsed_rows[0]):
+        name = col.strip().lower().lstrip('\ufeff')
+        header.append(name or f'coluna_{idx + 1}')
+
+    if not header:
+        return pd.DataFrame()
+
+    message_idx = header.index('mensagem') if 'mensagem' in header else None
+
+    rows = []
     ignored = 0
-    for line in lines[1:]:
-        if not line.strip():
+    for parts in parsed_rows[1:]:
+        if not any(str(part).strip() for part in parts):
             continue
-        parts = line.split(',')
-        if len(parts) < 3:
+
+        if len(parts) > len(header) and message_idx is not None:
+            extra_count = len(parts) - len(header)
+            message_end = message_idx + extra_count + 1
+            parts = (
+                parts[:message_idx]
+                + [delimiter.join(parts[message_idx:message_end])]
+                + parts[message_end:]
+            )
+
+        if len(parts) < len(header):
+            parts = parts + [''] * (len(header) - len(parts))
+
+        if len(parts) != len(header):
             ignored += 1
             continue
-        nome    = parts[i_nome].strip()
-        numero  = parts[i_num].strip()
-        # Junta todos os campos restantes como mensagem (lida com vírgulas internas)
-        msg_parts = parts[i_msg:] if i_msg < len(parts) else parts[2:]
-        mensagem = ','.join(msg_parts).strip().strip('"')
-        if not nome or not numero or not mensagem:
-            ignored += 1
-            continue
-        rows.append({'nome': nome, 'numero': numero, 'mensagem': mensagem})
+
+        rows.append({header[idx]: value.strip() for idx, value in enumerate(parts)})
 
     if ignored > 0:
         print(f"\n⚠ {ignored} linha(s) ignoradas (campos insuficientes).\n")
+
+    return pd.DataFrame(rows, columns=header)
 
 
 FORMAT_HINT = (

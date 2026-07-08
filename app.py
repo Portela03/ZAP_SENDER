@@ -142,7 +142,7 @@ def _push_event(user_id: str, event_type: str, **kwargs):
 # Autenticação por conta de usuário
 # ---------------------------------------------------------------------------
 
-_PUBLIC_ENDPOINTS = {'login', 'register', 'static'}
+_PUBLIC_ENDPOINTS = {'login', 'register', 'static', 'favicon', 'health'}
 
 
 @app.before_request
@@ -380,6 +380,11 @@ def api_template():
     )
 
 
+@app.route('/favicon.ico')
+def favicon():
+    return Response(status=204)
+
+
 @app.route('/api/load', methods=['POST'])
 def api_load():
     if 'file' not in request.files:
@@ -419,6 +424,18 @@ def api_load():
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+@app.route('/api/preview')
+def api_preview():
+    user_id = session['user_id']
+    db_path = _get_db_path(user_id)
+    tracker.init_db(db_path)
+    contacts = tracker.get_pending_preview(db_path)
+    return jsonify({
+        'total': len(contacts),
+        'contacts': contacts,
+    })
 
 
 @app.route('/api/config', methods=['GET'])

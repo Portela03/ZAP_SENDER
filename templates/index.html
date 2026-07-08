@@ -286,9 +286,9 @@ async function refreshStatus() {
       badge.style.display = 'none';
     }
 
-    // QR section
-    if (!isSending) showQrSection(false);
-    if (data.has_qr) { showQrSection(true); fetchQR(); }
+    // QR section — apenas mostra/esconde; o fetchQR é disparado pelo SSE
+    if (!isSending && !data.has_qr) showQrSection(false);
+    if (data.has_qr) showQrSection(true);
 
   } catch (e) { /* servidor pode estar iniciando */ }
 }
@@ -300,8 +300,11 @@ function showQrSection(show) {
   const el = document.getElementById('qr-section');
   el.style.display = show ? 'block' : 'none';
   if (show) {
-    document.getElementById('qr-spinner').classList.remove('d-none');
-    document.getElementById('qr-img').classList.add('d-none');
+    // só mostra spinner se a imagem ainda não foi carregada
+    const img = document.getElementById('qr-img');
+    if (img.classList.contains('d-none')) {
+      document.getElementById('qr-spinner').classList.remove('d-none');
+    }
   }
 }
 
